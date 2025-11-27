@@ -53,18 +53,30 @@ Mat4 g_viewport = {
         0.0,                    0.0,                     0.0, 1.0
 };
 
+//
+// point - draws a point at (x, y) in the frame buffer
+//
 static inline void point(int x, int y, int colour) {
         g_frame_buffer[g_window_width * (g_window_height/2 - y) - g_window_width/2 + x] = colour;
 }
 
+//
+// dbuf_write - writes a depth value at (x, y) in the depth buffer
+//
 static inline void dbuf_write(int x, int y, double depth) {
         g_depth_buffer[g_window_width * (g_window_height/2 - y) - g_window_width/2 + x] = depth;
 }
 
+//
+// dbuf_read - reads the depth value at (x, y) in the depth buffer
+//
 static inline double dbuf_read(int x, int y) {
         return g_depth_buffer[g_window_width * (g_window_height/2 - y) - g_window_width/2 + x];
 }
 
+//
+// line - draws a line in the frame buffer from (ax, ay) to (bx, by)
+//
 void line(int ax, int ay, int bx, int by, int colour) {
         int steep = abs(ay - by) > abs(ax - bx);
         if (steep) {
@@ -89,6 +101,9 @@ void line(int ax, int ay, int bx, int by, int colour) {
         }
 }
 
+//
+// out_of_view - checks whether a point resides outside of the screen
+//
 int out_of_view(Vec3 v) {
         return (v.x > g_window_width/2 - 1) ||
                (v.x < -g_window_width/2) ||
@@ -96,6 +111,9 @@ int out_of_view(Vec3 v) {
                (v.y < -g_window_height/2);
 }
 
+//
+// render_face - renders a single face, performs texture mapping & Gouraud shading
+//
 void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec3 light_pos) {
         Vec3 *v = model->obj->vertices;
         Vec3 *vt = model->obj->uvs;
@@ -189,10 +207,16 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
         }
 }
 
+//
+// persp - does naive perspective projection
+//
 static inline Vec3 persp(Vec3 v, double f) {
         return vec3_scale(v, 1.0/(1 - v.z/f));
 }
 
+//
+// render_model - renders all the faces in a model
+//
 void render_model(Model *model, Camera *cam) {
         Obj *obj = model->obj;
         Vec3 *v = obj->vertices;
@@ -231,6 +255,9 @@ void render_model(Model *model, Camera *cam) {
         }
 }
 
+//
+// reset_dbuf - resets the depth buffer to the maximum depth value
+//
 void reset_dbuf(void) {
         for (int i = 0; i < g_window_width*g_window_height; ++i) {
                 g_depth_buffer[i] = -1024.0;
