@@ -389,10 +389,9 @@
         //
         static inline Vec3 sample_texture(Texture *texture, double x, double y) {
                 int u = x*(texture->width - 1);
-                int v = y*(texture->height - 1);
+                int v = (1.0 - y)*(texture->height - 1);
 
-                int v_flipped = texture->height - 1 - v;
-                size_t i = v_flipped*texture->width + u;
+                size_t i = v*texture->width + u;
 
                 return (Vec3){
                         .x = (double)texture->data[i * 3*sizeof(uint8_t)]/255,

@@ -23,6 +23,8 @@
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define MAX3(x, y, z) (MAX(MAX(x, y), z))
+#define MIN3(x, y, z) (MIN(MIN(x, y), z))
 
 #define RGB(x, y, z)  (((x) << 16) | ((y) << 8) | (z))
 #define RGBf(x, y, z) (((uint8_t)(x*255) << 16) | ((uint8_t)(y*255) << 8) | (uint8_t)(z*255))
@@ -142,10 +144,10 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
 
         double recip_area = 1.0/signed_tri_area2(a, b, c);
 
-        int min_x = MIN(MIN(a.x, b.x), c.x);
-        int max_x = MAX(MAX(a.x, b.x), c.x);
-        int min_y = MIN(MIN(a.y, b.y), c.y);
-        int max_y = MAX(MAX(a.y, b.y), c.y);
+        int min_x = MIN3(a.x, b.x, c.x);
+        int max_x = MAX3(a.x, b.x, c.x);
+        int min_y = MIN3(a.y, b.y, c.y);
+        int max_y = MAX3(a.y, b.y, c.y);
 
         min_x = MAX(min_x, -g_window_width/2);
         min_y = MAX(min_y, -g_window_height/2);
