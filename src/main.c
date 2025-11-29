@@ -1,5 +1,6 @@
 // @TODO shadow mapping, build a shadow map for each Light, use Scene object so the shadow map can be built for all models in one go
 // @TODO also start using a Scene object to organise everything instead of just rendering it separately
+// @TODO handle asset loading failures
 
 #include <math.h>
 #include <stdio.h>
@@ -107,7 +108,7 @@ void line(int ax, int ay, int bx, int by, int colour) {
 int out_of_view(Vec3 v) {
         return (v.x > g_window_width/2 - 1) ||
                (v.x < -g_window_width/2) ||
-               (v.y > g_window_height/2) ||
+               (v.y > g_window_height/2 - 1) ||
                (v.y < -g_window_height/2);
 }
 
@@ -139,16 +140,17 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
         b = m4v3_mul(g_viewport, b);
         c = m4v3_mul(g_viewport, c);
 
-        if (out_of_view(a) || out_of_view(b) || out_of_view(c)) {
-                return;
-        }
-
         double recip_area = 1.0/signed_tri_area2(a, b, c);
 
         int min_x = MIN(MIN(a.x, b.x), c.x);
         int max_x = MAX(MAX(a.x, b.x), c.x);
         int min_y = MIN(MIN(a.y, b.y), c.y);
         int max_y = MAX(MAX(a.y, b.y), c.y);
+
+        min_x = MAX(min_x, -g_window_width/2);
+        min_y = MAX(min_y, -g_window_height/2);
+        max_x = MIN(max_x, g_window_width/2 - 1);
+        max_y = MIN(max_y, g_window_height/2 - 1);
 
         double Aa = b.y - c.y;
         double Ab = c.y - a.y;
@@ -308,12 +310,12 @@ int main(int argc, char **argv) {
                         }
                 }
 
-                g_light.pos = (Vec3){sin(i), sin(i), cos(i)};
+                g_light.pos = VEC3(sin(i), sin(i), cos(i));
 
                 Camera cam = {
-                        .pos     = {cos(0.5*i), 0.5, sin(0.5*i)},
-                        .subject = {0, 0, 0},
-                        .up      = {0, 1, 0}
+                        .pos     = VEC3(cos(0.5*i), 0.5, sin(0.5*i)),
+                        .subject = VEC3(0, 0, 0),
+                        .up      = VEC3(0, 1, 0)
                 };
                 set_view(&cam);
 

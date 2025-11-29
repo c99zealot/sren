@@ -30,6 +30,7 @@
                 Vertex_Data v1;
                 Vertex_Data v2;
         } Face;
+
         typedef struct {
                 Vec3 pos;
                 Vec3 subject;
@@ -75,10 +76,13 @@
                 size_t light_count;
         } Scene;
 
+        #define VEC3(x, y, z) ((Vec3){(x), (y), (z)})
+        #define VEC4(x, y, z) ((Vec4){(x), (y), (z), (w)})
+
         //
         // cvec3s_to_mat3 - constructs a 3x3 matrix from three 3D column vectors
         //
-        inline void cvec3s_to_mat3(Mat3 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
+        static inline void cvec3s_to_mat3(Mat3 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
                 m[0][0] = v0->x;
                 m[0][1] = v1->x;
                 m[0][2] = v2->x;
@@ -95,7 +99,7 @@
         //
         // rvec3s_to_mat3 - constructs a 3x3 matrix from three 3D row vectors
         //
-        inline void rvec3s_to_mat3(Mat3 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
+        static inline void rvec3s_to_mat3(Mat3 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
                 memcpy(*m, v0, sizeof(Vec3));
                 memcpy(*m + 3, v1, sizeof(Vec3));
                 memcpy(*m + 6, v2, sizeof(Vec3));
@@ -104,7 +108,7 @@
         //
         // cvec3s_to_hmat4 - constructs a 4x4 matrix from three homogenised 3D column vectors
         //
-        inline void cvec3s_to_hmat4(Mat4 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
+        static inline void cvec3s_to_hmat4(Mat4 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
                 m[0][0] = v0->x;
                 m[0][1] = v1->x;
                 m[0][2] = v2->x;
@@ -127,7 +131,7 @@
         //
         // rvec3s_to_hmat4 - constructs a 4x4 matrix from three homogenised 3D row vectors
         //
-        inline void rvec3s_to_hmat4(Mat4 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
+        static inline void rvec3s_to_hmat4(Mat4 m, Vec3 *v0, Vec3 *v1, Vec3 *v2) {
                 memcpy(*m, v0, sizeof(Vec3));
                 memcpy(*m + 4, v1, sizeof(Vec3));
                 memcpy(*m + 8, v2, sizeof(Vec3));
@@ -146,7 +150,7 @@
         //
         // mv3_mul - computes the product of a 3x3 matrix and a 3D vector
         //
-        inline Vec3 mv3_mul(Mat3 m, Vec3 v) {
+        static inline Vec3 mv3_mul(Mat3 m, Vec3 v) {
                 Mat3 _m;
                 memcpy(_m, m, sizeof(Mat3));
 
@@ -172,7 +176,7 @@
         //
         // m4v3_mul - computes the product of a 4x4 matrix and a homogenised 3D vector
         //
-        inline Vec3 m4v3_mul(Mat4 m, Vec3 v) {
+        static inline Vec3 m4v3_mul(Mat4 m, Vec3 v) {
                 Mat4 _m;
                 memcpy(_m, m, sizeof(Mat4));
 
@@ -203,7 +207,7 @@
         //
         // mv4_mul - computes the product of a 4x4 matrix and a 4D vector
         //
-        inline Vec4 mv4_mul(Mat4 m, Vec4 v) {
+        static inline Vec4 mv4_mul(Mat4 m, Vec4 v) {
                 Mat4 _m;
                 memcpy(_m, m, sizeof(Mat4));
 
@@ -233,7 +237,7 @@
         //
         // matmul4 - computes the product of two 4x4 matrices
         //
-        inline void matmul4(Mat4 C, Mat4 A, Mat4 B) {
+        static inline void matmul4(Mat4 C, Mat4 A, Mat4 B) {
                 for (int i = 0; i < 4; ++i) {
                         double a0 = A[i][0], a1 = A[i][1], a2 = A[i][2], a3 = A[i][3];
 
@@ -247,7 +251,7 @@
         //
         // m4_inverse_transpose - computes the inverse transpose of a 4x4 matrix
         //
-        inline void m4_inverse_transpose(Mat4 out, Mat4 m) {
+        static inline void m4_inverse_transpose(Mat4 out, Mat4 m) {
                 Mat4 cof;
                 for (int r = 0; r < 4; r++) {
                         for (int c = 0; c < 4; c++) {
@@ -292,21 +296,21 @@
         //
         // vec3_dot - computes the dot product of two 3D vectors
         //
-        inline double vec3_dot(Vec3 v0, Vec3 v1) {
+        static inline double vec3_dot(Vec3 v0, Vec3 v1) {
                 return v0.x*v1.x + v0.y*v1.y + v0.z*v1.z;
         }
 
         //
         // vec3_norm - computes the norm of a 3D vector
         //
-        inline double vec3_norm(Vec3 v) {
+        static inline double vec3_norm(Vec3 v) {
                 return sqrt(vec3_dot(v, v));
         }
 
         //
         // unit - returns a unit vector pointing in the direction of v
         //
-        inline Vec3 unit(Vec3 v) {
+        static inline Vec3 unit(Vec3 v) {
                 double c = 1.0/vec3_norm(v);
                 v.x *= c;
                 v.y *= c;
@@ -316,7 +320,7 @@
         //
         // cross - computes the cross product of two vectors
         //
-        inline Vec3 cross(Vec3 v0, Vec3 v1) {
+        static inline Vec3 cross(Vec3 v0, Vec3 v1) {
                 return (Vec3){
                         .x = v0.y*v1.z - v0.z*v1.y,
                         .y = v0.z*v1.x - v0.x*v1.z,
@@ -327,35 +331,35 @@
         //
         // vec3_add - subtracts a 3D vector from another
         //
-        inline Vec3 vec3_sub(Vec3 v0, Vec3 v1) {
+        static inline Vec3 vec3_sub(Vec3 v0, Vec3 v1) {
                 return (Vec3){v0.x - v1.x, v0.y - v1.y, v0.z - v1.z};
         }
 
         //
         // vec3_add - adds two 3D vectors
         //
-        inline Vec3 vec3_add(Vec3 v0, Vec3 v1) {
+        static inline Vec3 vec3_add(Vec3 v0, Vec3 v1) {
                 return (Vec3){v0.x + v1.x, v0.y + v1.y, v0.z + v1.z};
         }
 
         //
         // vec3_scale - scales a 3D vector v by a scalar s
         //
-        inline Vec3 vec3_scale(Vec3 v, double s) {
+        static inline Vec3 vec3_scale(Vec3 v, double s) {
                 return (Vec3){s*v.x, s*v.y, s*v.z};
         }
 
         //
         // signed_tri_area2 - calculates twice the signed area of the triangle abc
         //
-        inline double signed_tri_area2(Vec3 a, Vec3 b, Vec3 c) {
+        static inline double signed_tri_area2(Vec3 a, Vec3 b, Vec3 c) {
                 return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x);
         }
 
         //
         // attenuate - attenuates a light value based on a given distance
         //
-        inline double attenuate(double intensity, double dist) {
+        static inline double attenuate(double intensity, double dist) {
                 intensity = intensity < 0 ? 0 : intensity/dist;
                 return intensity > 1 ? 1 : intensity;
         }
@@ -363,7 +367,7 @@
         //
         // set_view - computes the view matrix for a given camera
         //
-        inline void set_view(Camera *cam) {
+        static inline void set_view(Camera *cam) {
                 Vec3 n = unit(vec3_sub(cam->pos, cam->subject));
                 Vec3 l = unit(cross(cam->up, n));
                 Vec3 m = unit(cross(n, l));
