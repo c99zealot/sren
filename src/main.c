@@ -200,6 +200,11 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
                         if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
+                                double depth = recip_area * (Ea*a.z + Eb*b.z + Ec*c.z);
+                                if (depth <= dbuf_read(x, y)) {
+                                        continue;
+                                }
+
                                 Vec3 uv = vec3_scale(
                                         vec3_add(
                                                 vec3_scale(ta, Ea),
@@ -216,11 +221,8 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
                                 colour = vec3_scale(colour, interp_light);
                                 uint32_t lit_colour = RGBf(colour.x, colour.y, colour.z);
 
-                                double depth = recip_area * (Ea*a.z + Eb*b.z + Ec*c.z);
-                                if (depth > dbuf_read(x, y)) {
-                                        point(x, y, lit_colour);
-                                        dbuf_write(x, y, depth);
-                                }
+                                point(x, y, lit_colour);
+                                dbuf_write(x, y, depth);
                         }
 
                         Ea += Aa;
