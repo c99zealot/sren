@@ -32,6 +32,18 @@
         } Face;
 
         typedef struct {
+                size_t width;
+                size_t height;
+                uint8_t *data;
+        } Texture;
+
+        typedef struct {
+                size_t width;
+                size_t height;
+                double *data;
+        } Shadow_Map;
+
+        typedef struct {
                 Vec3 pos;
                 Vec3 subject;
                 Vec3 up;
@@ -41,8 +53,12 @@
 
         typedef struct {
                 Vec3 pos;
+                Vec3 subject;
+                Vec3 up;
                 Vec3 colour;
                 double intensity;
+                Shadow_Map *shadow_map;
+                Mat4 view_mat;
         } Light;
 
         typedef struct {
@@ -55,12 +71,6 @@
                 size_t norm_count;
                 size_t face_count;
         } Obj;
-
-        typedef struct {
-                size_t width;
-                size_t height;
-                uint8_t *data;
-        } Texture;
 
         typedef struct {
                 Obj *obj;
@@ -365,7 +375,7 @@
         }
 
         //
-        // set_view - computes the view matrix for a given camera
+        // set_view @TODO bad name - given a Camera, computes its view matrix and inverse transpose
         //
         static inline void set_view(Camera *cam) {
                 Vec3 n = unit(vec3_sub(cam->pos, cam->subject));
@@ -385,6 +395,25 @@
         }
 
         //
+        // set_light_view - computes a Light's view matrix for shadow map rendering
+        //
+        static inline void set_light_view(Light *light) {
+                Vec3 n = unit(vec3_sub(light->pos, light->subject));
+                Vec3 l = unit(cross(light->up, n));
+                Vec3 m = unit(cross(n, l));
+
+                rvec3s_to_hmat4(light->view_mat, &l, &m, &n);
+                Mat4 C = {
+                        1.0, 0.0, 0.0, -light->pos.x,
+                        0.0, 1.0, 0.0, -light->pos.y,
+                        0.0, 0.0, 1.0, -light->pos.z,
+                        0.0, 0.0, 0.0, 1.0
+                };
+
+                matmul4(light->view_mat, light->view_mat, C);
+        }
+
+        //
         // sample texture - samples a texture at (x, y)
         //
         static inline Vec3 sample_texture(Texture *texture, double x, double y) {
@@ -400,6 +429,7 @@
                 };
         }
 
+        extern Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h);
         extern Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h);
         extern Obj *load_obj(Arena *arena, char *filename);
         extern Model *load_model(

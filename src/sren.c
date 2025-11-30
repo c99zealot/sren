@@ -76,6 +76,15 @@ Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h) {
         return texture;
 }
 
+Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h) {
+        Shadow_Map *smap = arena_alloc(arena, sizeof(Obj));
+        smap->width = w;
+        smap->height = h;
+        smap->data = arena_alloc(arena, w*h*sizeof(double));
+
+        return smap;
+}
+
 Obj *load_obj(Arena *arena, char *filename) {
         FILE *obj_file = fopen(filename, "rb");
         if (!obj_file) {

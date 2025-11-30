@@ -1,4 +1,5 @@
 // @TODO shadow mapping, build a shadow map for each Light, use Scene object so the shadow map can be built for all models in one go
+// @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write a general sampling functions for 0,0 @ bottom left / 0,0 @ center
 // @TODO also start using a Scene object to organise everything instead of just rendering it separately
 // @TODO handle asset loading failures
 
@@ -29,6 +30,8 @@
 #define RGB(x, y, z)  (((x) << 16) | ((y) << 8) | (z))
 #define RGBf(x, y, z) (((uint8_t)(x*255) << 16) | ((uint8_t)(y*255) << 8) | (uint8_t)(z*255))
 
+#define SCREEN(x, y) (g_window_width * (g_window_height/2 - y) - g_window_width/2 + x)
+
 #define TIME(x) {                                                   \
         clock_t start = clock();                                    \
         x;                                                          \
@@ -42,12 +45,17 @@ uint32_t *g_frame_buffer;
 double *g_depth_buffer;
 
 Light g_light = {
-        .colour = {1.0, 1.0, 1.0},
+        .colour = VEC3(1.0, 1.0, 1.0),
+        .subject = VEC3(0, 0, 0),
         .intensity = 1.0
 };
 
 const int g_window_width = 800;
 const int g_window_height = 800;
+const int g_min_x = -g_window_width  / 2;
+const int g_min_y = -g_window_height / 2;
+const int g_max_x =  g_window_width  / 2 - 1;
+const int g_max_y =  g_window_height / 2 - 1;
 
 Mat4 g_viewport = {
         (g_window_width - 1)/2,   0.0,                   0.0, 0.0,
@@ -60,21 +68,37 @@ Mat4 g_viewport = {
 // point - draws a point at (x, y) in the frame buffer
 //
 static inline void point(int x, int y, int colour) {
-        g_frame_buffer[g_window_width * (g_window_height/2 - y) - g_window_width/2 + x] = colour;
+        g_frame_buffer[SCREEN(x, y)] = colour;
 }
 
 //
 // dbuf_write - writes a depth value at (x, y) in the depth buffer
 //
 static inline void dbuf_write(int x, int y, double depth) {
-        g_depth_buffer[g_window_width * (g_window_height/2 - y) - g_window_width/2 + x] = depth;
+        g_depth_buffer[SCREEN(x, y)] = depth;
 }
 
 //
 // dbuf_read - reads the depth value at (x, y) in the depth buffer
 //
 static inline double dbuf_read(int x, int y) {
-        return g_depth_buffer[g_window_width * (g_window_height/2 - y) - g_window_width/2 + x];
+        return g_depth_buffer[SCREEN(x, y)];
+}
+
+//
+// smap_write - writes a depth value at (x, y) in a shadow map
+//
+static inline void smap_write(Shadow_Map *shadow_map, int x, int y, double depth) {
+        size_t i = (shadow_map->width * (shadow_map->height/2 - y) - shadow_map->width/2 + x);
+        shadow_map->data[i] = depth;
+}
+
+//
+// smap_read - reads the depth value at (x, y) in a shadow map
+//
+static inline double smap_read(Shadow_Map *shadow_map, int x, int y) {
+        size_t i = (shadow_map->width * (shadow_map->height/2 - y) - shadow_map->width/2 + x);
+        return shadow_map->data[i];
 }
 
 //
@@ -115,10 +139,9 @@ int out_of_view(Vec3 v) {
 }
 
 //
-// render_face - renders a single face, performs texture mapping & Gouraud shading
+// render_face - renders a single face in a model to the framebuffer performs texture mapping & Gouraud shading
 //
 void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec3 light_pos) {
-        Vec3 *v = model->obj->vertices;
         Vec3 *vt = model->obj->uvs;
         Vec3 *vn = model->obj->norms;
 
@@ -212,6 +235,68 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
 }
 
 //
+// render_smap_face - renders a single face in a model to a shadow map
+//
+void render_smap_face(Model *model, Light *light, Vec3 a, Vec3 b, Vec3 c) {
+        Vec3 *v = model->obj->vertices;
+
+        a = m4v3_mul(g_viewport, a);
+        b = m4v3_mul(g_viewport, b);
+        c = m4v3_mul(g_viewport, c);
+
+        double recip_area = 1.0/signed_tri_area2(a, b, c);
+
+        int min_x = MIN3(a.x, b.x, c.x);
+        int max_x = MAX3(a.x, b.x, c.x);
+        int min_y = MIN3(a.y, b.y, c.y);
+        int max_y = MAX3(a.y, b.y, c.y);
+
+        min_x = MAX(min_x, g_min_x);
+        min_y = MAX(min_y, g_min_y);
+        max_x = MIN(max_x, g_max_x);
+        max_y = MIN(max_y, g_max_y);
+
+        double Aa = b.y - c.y;
+        double Ab = c.y - a.y;
+        double Ac = a.y - b.y;
+                                   
+        double Ba = c.x - b.x;
+        double Bb = a.x - c.x;
+        double Bc = b.x - a.x;
+
+        double Ca = b.x*c.y - c.x*b.y;
+        double Cb = c.x*a.y - a.x*c.y;
+        double Cc = a.x*b.y - b.x*a.y;
+              
+        double Ea = Aa*min_x + Ba*max_y + Ca;
+        double Eb = Ab*min_x + Bb*max_y + Cb;
+        double Ec = Ac*min_x + Bc*max_y + Cc;
+
+        double Ea_x0 = Ea;
+        double Eb_x0 = Eb;
+        double Ec_x0 = Ec;
+
+        for (int y = max_y; y >= min_y; --y) {
+                for (int x = min_x; x <= max_x; ++x) {
+                        if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
+                                double depth = recip_area * (Ea*a.z + Eb*b.z + Ec*c.z);
+                                if (depth > smap_read(light->shadow_map, x, y)) {
+                                        smap_write(light->shadow_map, x, y, depth);
+                                }
+                        }
+
+                        Ea += Aa;
+                        Eb += Ab;
+                        Ec += Ac;
+                }
+
+                Ea = Ea_x0 -= Ba;
+                Eb = Eb_x0 -= Bb;
+                Ec = Ec_x0 -= Bc;
+        }
+}
+
+//
 // persp - does naive perspective projection
 //
 static inline Vec3 persp(Vec3 v, double f) {
@@ -237,13 +322,6 @@ void render_model(Model *model, Camera *cam) {
                 b = m4v3_mul(cam->view_mat, b);
                 c = m4v3_mul(cam->view_mat, c);
 
-#ifdef PERSP
-                double foc = vec3_norm(vec3_sub(cam->subject, cam->pos));
-                a = persp(a, foc);
-                b = persp(b, foc);
-                c = persp(c, foc);
-#endif
-
                 Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
                 if (face_norm.z <= 0) {
                         continue;
@@ -253,9 +331,35 @@ void render_model(Model *model, Camera *cam) {
                 line(a.x, a.y, b.x, b.y, 0xff);
                 line(b.x, b.y, c.x, c.y, 0xff);
                 line(c.x, c.y, a.x, a.y, 0xff);
-                continue;
-#endif
+#else
                 render_face(model, cam, a, b, c, &f[i], light_in_view);
+#endif
+        }
+}
+
+//
+// render_model_smap - renders depths of a model's faces to a shadow map
+//
+void render_model_smap(Model *model, Light *light) {
+        Obj *obj = model->obj;
+        Vec3 *v = obj->vertices;
+        Face *f = obj->faces;
+
+        for (int i = 0; i < obj->face_count; ++i) {
+                Vec3 a = v[f[i].v0[VERTEX]];
+                Vec3 b = v[f[i].v1[VERTEX]];
+                Vec3 c = v[f[i].v2[VERTEX]];
+
+                a = m4v3_mul(light->view_mat, a);
+                b = m4v3_mul(light->view_mat, b);
+                c = m4v3_mul(light->view_mat, c);
+
+                Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
+                if (face_norm.z <= 0) {
+                        continue;
+                }
+
+                render_smap_face(model, light, a, b, c);
         }
 }
 
@@ -302,6 +406,8 @@ int main(int argc, char **argv) {
         }
         g_frame_buffer = g_screen->pixels;
 
+        g_light.shadow_map = mk_smap(&render_arena, g_window_width, g_window_height);
+
         double i = 0.0;
         for (;;) {
                 SDL_Event event;
@@ -313,6 +419,7 @@ int main(int argc, char **argv) {
                 }
 
                 g_light.pos = VEC3(sin(i), sin(i), cos(i));
+                set_light_view(&g_light);
 
                 Camera cam = {
                         .pos     = VEC3(cos(0.5*i), 0.5, sin(0.5*i)),
@@ -325,6 +432,8 @@ int main(int argc, char **argv) {
 
                 clock_t start = clock();
 
+                render_model_smap(floor_model, &g_light);
+                render_model_smap(main_model, &g_light);
                 render_model(floor_model, &cam);
                 render_model(main_model, &cam);
 
