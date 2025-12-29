@@ -1,7 +1,7 @@
 // @TODO shadow mapping, build a shadow map for each Light, use Scene object so the shadow map can be built for all models in one go
 // @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write a general sampling functions for 0,0 @ bottom left / 0,0 @ center
 // @TODO also start using a Scene object to organise everything instead of just rendering it separately
-// @TODO handle asset loading failures
+// @TODO handle asset loading failures with default assets
 
 #include <math.h>
 #include <stdio.h>
@@ -50,15 +50,15 @@ Light g_light = {
         .intensity = 1.0
 };
 
-const int g_window_width = 800;
-const int g_window_height = 800;
+const int g_window_width = 600;
+const int g_window_height = 600;
 const int g_min_x = -g_window_width  / 2;
 const int g_min_y = -g_window_height / 2;
 const int g_max_x =  g_window_width  / 2 - 1;
 const int g_max_y =  g_window_height / 2 - 1;
 
 Mat4 g_viewport = {
-        (g_window_width - 1)/2,   0.0,                   0.0, 0.0,
+        (g_window_width - 1)/2, 0.0,                     0.0, 0.0,
         0.0,                    (g_window_height/2 - 1), 0.0, 0.0,
         0.0,                    0.0,                     1.0, 0.0,
         0.0,                    0.0,                     0.0, 1.0
@@ -104,28 +104,36 @@ static inline double smap_read(Shadow_Map *shadow_map, int x, int y) {
 //
 // line - draws a line in the frame buffer from (ax, ay) to (bx, by)
 //
-void line(int ax, int ay, int bx, int by, int colour) {
-        int steep = abs(ay - by) > abs(ax - bx);
+void line(Vec3 a, Vec3 b, int colour) {
+        int steep = abs(a.y - b.y) > abs(a.x - b.x);
         if (steep) {
-                SWAP(int, ax, ay);
-                SWAP(int, bx, by);
+                SWAP(int, a.x, a.y);
+                SWAP(int, b.x, b.y);
         }
 
-        if (ax > bx) {
-                SWAP(int, ax, bx);
-                SWAP(int, ay, by);
+        if (a.x > b.x) {
+                SWAP(int, a.x, b.x);
+                SWAP(int, a.y, b.y);
         }
 
-        float y = ay;
-        float m = (by - ay) / (float)(bx - ax);
-        for (int x = ax; x <= bx; ++x) {
+        float _y = a.y;
+        float m = (b.y - a.y) / (float)(b.x - a.x);
+        for (int _x = a.x; _x <= b.x; ++_x) {
                 if (steep) {
-                        point(y, x, colour);
+                        point(_y, _x, colour);
                 } else {
-                        point(x, y, colour);
+                        point(_x, _y, colour);
                 }
-                y += m;
+                _y += m;
         }
+}
+
+//
+// persp - basic perspective projection
+//
+static inline Vec3 persp(Vec3 v) {
+        double recip_z = -1.0/v.z;
+        return VEC3(v.x * recip_z, v.y * recip_z, v.z);
 }
 
 //
@@ -139,15 +147,23 @@ int out_of_view(Vec3 v) {
 }
 
 //
-// render_face - renders a single face in a model to the framebuffer performs texture mapping & Gouraud shading
+// render_face - renders a single face in a model to the framebuffer, performs texture mapping & Gouraud shading
 //
-void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec3 light_pos) {
+void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec3 lb, Vec3 lc, Face *f, Vec3 light_pos, Light *light) {
         Vec3 *vt = model->obj->uvs;
         Vec3 *vn = model->obj->norms;
 
         Vec3 ta = vt[f->v0[UV]];
         Vec3 tb = vt[f->v1[UV]];
         Vec3 tc = vt[f->v2[UV]];
+
+        double a_recip_z = 1.0/a.z;
+        double b_recip_z = 1.0/b.z;
+        double c_recip_z = 1.0/c.z;
+
+        Vec3 ta_proj = vec3_scale(ta, a_recip_z);
+        Vec3 tb_proj = vec3_scale(tb, b_recip_z);
+        Vec3 tc_proj = vec3_scale(tc, c_recip_z);
 
         Vec3 na = m4v3_mul(cam->inv_tr, vn[f->v0[NORM]]);
         Vec3 nb = m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]);
@@ -164,6 +180,10 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
         a = m4v3_mul(g_viewport, a);
         b = m4v3_mul(g_viewport, b);
         c = m4v3_mul(g_viewport, c);
+
+        Vec3 a_light_proj = vec3_scale(la, a_recip_z);
+        Vec3 b_light_proj = vec3_scale(lb, b_recip_z);
+        Vec3 c_light_proj = vec3_scale(lc, c_recip_z);
 
         double recip_area = 1.0/signed_tri_area2(a, b, c);
 
@@ -200,25 +220,45 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
                         if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                double depth = recip_area * (Ea*a.z + Eb*b.z + Ec*c.z);
+                                double interp_recip_z = recip_area * (Ea*a_recip_z + Eb*b_recip_z + Ec*c_recip_z);
+
+                                double depth = -interp_recip_z;
                                 if (depth <= dbuf_read(x, y)) {
                                         continue;
                                 }
 
                                 Vec3 uv = vec3_scale(
                                         vec3_add(
-                                                vec3_scale(ta, Ea),
+                                                vec3_scale(ta_proj, Ea),
                                                 vec3_add(
-                                                        vec3_scale(tb, Eb),
-                                                        vec3_scale(tc, Ec)
+                                                        vec3_scale(tb_proj, Eb),
+                                                        vec3_scale(tc_proj, Ec)
                                                 )
                                         ),
                                         recip_area
                                 );
+                                uv = vec3_scale(uv, 1.0/interp_recip_z);
+
+                                Vec3 interp_light_proj = vec3_scale(
+                                        vec3_add(
+                                                vec3_scale(a_light_proj, Ea),
+                                                vec3_add(
+                                                        vec3_scale(b_light_proj, Eb),
+                                                        vec3_scale(c_light_proj, Ec)
+                                                )
+                                        ),
+                                        recip_area
+                                );
+                                interp_light_proj = vec3_scale(interp_light_proj, 1.0/interp_recip_z);
+                                interp_light_proj = m4v3_mul(g_viewport, persp(interp_light_proj));
+
+                                double light_pixel = 0.1;
+                                if (smap_read(light->shadow_map, interp_light_proj.x, interp_light_proj.y) <= interp_light_proj.z + 0.05) {
+                                        light_pixel = recip_area * (Ea*light_a + Eb*light_b + Ec*light_c);
+                                }
 
                                 Vec3 colour = sample_texture(model->texture, uv.x, uv.y);
-                                double interp_light = recip_area * (Ea*light_a + Eb*light_b + Ec*light_c);
-                                colour = vec3_scale(colour, interp_light);
+                                colour = vec3_scale(colour, light_pixel);
                                 uint32_t lit_colour = RGBf(colour.x, colour.y, colour.z);
 
                                 point(x, y, lit_colour);
@@ -239,9 +279,7 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Face *f, Vec
 //
 // render_smap_face - renders a single face in a model to a shadow map
 //
-void render_smap_face(Model *model, Light *light, Vec3 a, Vec3 b, Vec3 c) {
-        Vec3 *v = model->obj->vertices;
-
+void render_smap_face(Light *light, Vec3 a, Vec3 b, Vec3 c) {
         a = m4v3_mul(g_viewport, a);
         b = m4v3_mul(g_viewport, b);
         c = m4v3_mul(g_viewport, c);
@@ -299,13 +337,6 @@ void render_smap_face(Model *model, Light *light, Vec3 a, Vec3 b, Vec3 c) {
 }
 
 //
-// persp - does naive perspective projection
-//
-static inline Vec3 persp(Vec3 v, double f) {
-        return vec3_scale(v, 1.0/(1 - v.z/f));
-}
-
-//
 // render_model - renders all the faces in a model
 //
 void render_model(Model *model, Camera *cam) {
@@ -320,9 +351,21 @@ void render_model(Model *model, Camera *cam) {
                 Vec3 b = v[f[i].v1[VERTEX]];
                 Vec3 c = v[f[i].v2[VERTEX]];
 
+                Vec3 la = m4v3_mul(g_light.view_mat, a);
+                Vec3 lb = m4v3_mul(g_light.view_mat, b);
+                Vec3 lc = m4v3_mul(g_light.view_mat, c);
+
                 a = m4v3_mul(cam->view_mat, a);
                 b = m4v3_mul(cam->view_mat, b);
                 c = m4v3_mul(cam->view_mat, c);
+
+                if (a.z > 0 || b.z > 0 || c.z > 0) {
+                        continue;
+                }
+
+                a = persp(a);
+                b = persp(b);
+                c = persp(c);
 
                 Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
                 if (face_norm.z <= 0) {
@@ -330,11 +373,11 @@ void render_model(Model *model, Camera *cam) {
                 }
 
 #ifdef WIREFRAME
-                line(a.x, a.y, b.x, b.y, 0xff);
-                line(b.x, b.y, c.x, c.y, 0xff);
-                line(c.x, c.y, a.x, a.y, 0xff);
+                line(a, b, 0xff);
+                line(b, c, 0xff);
+                line(c, a, 0xff);
 #else
-                render_face(model, cam, a, b, c, &f[i], light_in_view);
+                render_face(model, cam, a, b, c, la, lb, lc, &f[i], light_in_view, &g_light);
 #endif
         }
 }
@@ -348,20 +391,20 @@ void render_model_smap(Model *model, Light *light) {
         Face *f = obj->faces;
 
         for (int i = 0; i < obj->face_count; ++i) {
-                Vec3 a = v[f[i].v0[VERTEX]];
-                Vec3 b = v[f[i].v1[VERTEX]];
-                Vec3 c = v[f[i].v2[VERTEX]];
+                Vec3 a = persp(m4v3_mul(light->view_mat, v[f[i].v0[VERTEX]]));
+                Vec3 b = persp(m4v3_mul(light->view_mat, v[f[i].v1[VERTEX]]));
+                Vec3 c = persp(m4v3_mul(light->view_mat, v[f[i].v2[VERTEX]]));
 
-                a = m4v3_mul(light->view_mat, a);
-                b = m4v3_mul(light->view_mat, b);
-                c = m4v3_mul(light->view_mat, c);
+                if (a.z > 0 || b.z > 0 || c.z > 0) {
+                        continue;
+                }
 
                 Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
                 if (face_norm.z <= 0) {
                         continue;
                 }
 
-                render_smap_face(model, light, a, b, c);
+                render_smap_face(light, a, b, c);
         }
 }
 
@@ -372,6 +415,38 @@ void reset_dbuf(void) {
         for (int i = 0; i < g_window_width*g_window_height; ++i) {
                 g_depth_buffer[i] = -1024.0;
         }
+}
+
+//
+// reset_smap - resets a Light's shadow map to the maximum depth value
+//
+void reset_smap(Light *light) {
+        Shadow_Map *smap = light->shadow_map;
+        for (int i = 0; i < smap->width*smap->height; ++i) {
+                smap->data[i] = -1024.0;
+        }
+}
+
+void draw_smap(Shadow_Map *smap, uint8_t *pixels) {
+        for (int i = 0; i < smap->width*smap->height; ++i) {
+                double d = (smap->data[i] + 4) / 8;
+                uint32_t colour = RGBf(d, d, d);
+                memcpy(pixels, &colour, 4);
+                pixels += 4;
+        }
+}
+
+void render_axes(Camera *cam) {
+        Vec3 o = VEC3(0, 0, 0), x = VEC3(0.1, 0, 0), y = VEC3(0, 0.1, 0), z = VEC3(0, 0, 0.1);
+
+        o = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, o)));
+        x = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, x)));
+        y = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, y)));
+        z = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, z)));
+
+        line(o, x, 0xff0000);
+        line(o, y, 0x00ff00);
+        line(o, z, 0x0000ff);
 }
 
 int main(int argc, char **argv) {
@@ -385,7 +460,7 @@ int main(int argc, char **argv) {
                 return -1;
         }
 
-        g_window = SDL_CreateWindow("software renderer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
+        g_window = SDL_CreateWindow("sren", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
         if (g_window == NULL) {
                 fprintf(stderr, "SDL_CreateWindow failure: %s\n", SDL_GetError());
                 SDL_Quit();
@@ -410,6 +485,22 @@ int main(int argc, char **argv) {
 
         g_light.shadow_map = mk_smap(&render_arena, g_window_width, g_window_height);
 
+#if 0
+        SDL_Window *smap_window = SDL_CreateWindow("sren_smap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
+        if (smap_window == NULL) {
+                fprintf(stderr, "SDL_CreateWindow failure: %s\n", SDL_GetError());
+                SDL_Quit();
+                return -1;
+        }
+
+        SDL_Surface *smap_screen = SDL_GetWindowSurface(smap_window);
+        if (smap_screen == NULL) {
+                fprintf(stderr, "SDL_GetWindowSurface failure: %s\n", SDL_GetError());
+                SDL_Quit();
+                return -1;
+        }
+#endif
+
         double i = 0.0;
         for (;;) {
                 SDL_Event event;
@@ -420,11 +511,14 @@ int main(int argc, char **argv) {
                         }
                 }
 
-                g_light.pos = VEC3(sin(i), sin(i), cos(i));
+                g_light.pos = VEC3(0.4*sin(i), 1.5, 0.4*cos(i));
+                g_light.subject = VEC3(0, 0, 0);
+                g_light.up = VEC3(0, 1, 0);
                 set_light_view(&g_light);
+                reset_smap(&g_light);
 
                 Camera cam = {
-                        .pos     = VEC3(cos(0.5*i), 0.5, sin(0.5*i)),
+                        .pos     = VEC3(1.5*cos(0.4*i), 0.8*sin(0.8*i), 1.5*sin(0.4*i)),
                         .subject = VEC3(0, 0, 0),
                         .up      = VEC3(0, 1, 0)
                 };
@@ -436,23 +530,33 @@ int main(int argc, char **argv) {
 
                 render_model_smap(floor_model, &g_light);
                 render_model_smap(main_model, &g_light);
+
+#if 0
+                draw_smap(g_light.shadow_map, smap_screen->pixels);
+#endif
+
                 render_model(floor_model, &cam);
                 render_model(main_model, &cam);
 
-                g_light.pos = m4v3_mul(cam.view_mat, g_light.pos);
-                g_light.pos = m4v3_mul(g_viewport, g_light.pos);
+                render_axes(&cam);
+
+                g_light.pos = m4v3_mul(g_viewport, persp(m4v3_mul(cam.view_mat, g_light.pos)));
 
                 if (!out_of_view(g_light.pos) && dbuf_read(g_light.pos.x, g_light.pos.y) < g_light.pos.z) {
                         point(g_light.pos.x, g_light.pos.y, RGBf(1.0, 1.0, 1.0));
                 }
 
                 double elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
-                printf("frame time: %.4fms\nfps: %f\n\n", elapsed_ms, 1000 / elapsed_ms);
+                printf(" %f fps [frame time: %.4fms]\t\r", 1000 / elapsed_ms, elapsed_ms);
+                fflush(stdout);
 
                 SDL_UpdateWindowSurface(g_window);
+#if 0
+                SDL_UpdateWindowSurface(smap_window);
+#endif
 
                 memset(g_frame_buffer, 0, g_window_width*g_window_height*sizeof(uint32_t));
-                i += 0.005;
+                i += 0.01;
         }
 
 _exit:

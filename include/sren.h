@@ -324,6 +324,7 @@
                 double c = 1.0/vec3_norm(v);
                 v.x *= c;
                 v.y *= c;
+                v.z *= c;
                 return v;
         }
 
@@ -380,17 +381,16 @@
         static inline void set_view(Camera *cam) {
                 Vec3 n = unit(vec3_sub(cam->pos, cam->subject));
                 Vec3 l = unit(cross(cam->up, n));
-                Vec3 m = unit(cross(n, l));
+                Vec3 m = cross(n, l);
 
-                rvec3s_to_hmat4(cam->view_mat, &l, &m, &n);
-                Mat4 C = {
-                        1.0, 0.0, 0.0, -cam->pos.x,
-                        0.0, 1.0, 0.0, -cam->pos.y,
-                        0.0, 0.0, 1.0, -cam->pos.z,
-                        0.0, 0.0, 0.0, 1.0
+                Mat4 view = {
+                        l.x,  l.y,  l.z, -vec3_dot(l, cam->pos),
+                        m.x,  m.y,  m.z, -vec3_dot(m, cam->pos),
+                        n.x,  n.y,  n.z, -vec3_dot(n, cam->pos),
+                        0.0,  0.0,  0.0,  1.0
                 };
 
-                matmul4(cam->view_mat, cam->view_mat, C);
+                memcpy(cam->view_mat, view, sizeof(Mat4));
                 m4_inverse_transpose(cam->inv_tr, cam->view_mat);
         }
 
@@ -400,17 +400,16 @@
         static inline void set_light_view(Light *light) {
                 Vec3 n = unit(vec3_sub(light->pos, light->subject));
                 Vec3 l = unit(cross(light->up, n));
-                Vec3 m = unit(cross(n, l));
+                Vec3 m = cross(n, l);
 
-                rvec3s_to_hmat4(light->view_mat, &l, &m, &n);
-                Mat4 C = {
-                        1.0, 0.0, 0.0, -light->pos.x,
-                        0.0, 1.0, 0.0, -light->pos.y,
-                        0.0, 0.0, 1.0, -light->pos.z,
-                        0.0, 0.0, 0.0, 1.0
+                Mat4 view = {
+                        l.x,  l.y,  l.z, -vec3_dot(l, light->pos),
+                        m.x,  m.y,  m.z, -vec3_dot(m, light->pos),
+                        n.x,  n.y,  n.z, -vec3_dot(n, light->pos),
+                        0.0,  0.0,  0.0,  1.0
                 };
 
-                matmul4(light->view_mat, light->view_mat, C);
+                memcpy(light->view_mat, view, sizeof(Mat4));
         }
 
         //
