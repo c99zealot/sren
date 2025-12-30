@@ -371,7 +371,7 @@
         // attenuate - attenuates a light value based on a given distance
         //
         static inline double attenuate(double intensity, double dist) {
-                intensity = intensity < 0 ? 0 : intensity/dist;
+                intensity = intensity < 0 ? 0 : intensity/(dist*dist);
                 return intensity > 1 ? 1 : intensity;
         }
 

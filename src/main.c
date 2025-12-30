@@ -1,4 +1,5 @@
-// @TODO shadow mapping, build a shadow map for each Light, use Scene object so the shadow map can be built for all models in one go
+// @TODO Scene object
+// @TODO move backface culling etc. code from render_model to render_face to simplify both functions
 // @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write a general sampling functions for 0,0 @ bottom left / 0,0 @ center
 // @TODO also start using a Scene object to organise everything instead of just rendering it separately
 // @TODO handle asset loading failures with default assets
@@ -153,17 +154,13 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
         Vec3 *vt = model->obj->uvs;
         Vec3 *vn = model->obj->norms;
 
-        Vec3 ta = vt[f->v0[UV]];
-        Vec3 tb = vt[f->v1[UV]];
-        Vec3 tc = vt[f->v2[UV]];
-
         double a_recip_z = 1.0/a.z;
         double b_recip_z = 1.0/b.z;
         double c_recip_z = 1.0/c.z;
 
-        Vec3 ta_proj = vec3_scale(ta, a_recip_z);
-        Vec3 tb_proj = vec3_scale(tb, b_recip_z);
-        Vec3 tc_proj = vec3_scale(tc, c_recip_z);
+        Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
+        Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
+        Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
 
         Vec3 na = m4v3_mul(cam->inv_tr, vn[f->v0[NORM]]);
         Vec3 nb = m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]);
@@ -217,44 +214,30 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
         double Eb_x0 = Eb;
         double Ec_x0 = Ec;
 
+        #define INTERP(a, b, c)     (recip_area * (Ea*(a) + Eb*(b) + Ec*(c)))
+        #define VEC_INTERP(a, b, c) (vec3_scale(vec3_add(vec3_scale(a, Ea), vec3_add(vec3_scale(b, Eb), \
+                                        vec3_scale(c, Ec))), recip_area))
+
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
                         if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                double interp_recip_z = recip_area * (Ea*a_recip_z + Eb*b_recip_z + Ec*c_recip_z);
+                                double interp_recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
 
                                 double depth = -interp_recip_z;
                                 if (depth <= dbuf_read(x, y)) {
                                         continue;
                                 }
 
-                                Vec3 uv = vec3_scale(
-                                        vec3_add(
-                                                vec3_scale(ta_proj, Ea),
-                                                vec3_add(
-                                                        vec3_scale(tb_proj, Eb),
-                                                        vec3_scale(tc_proj, Ec)
-                                                )
-                                        ),
-                                        recip_area
-                                );
+                                Vec3 uv = VEC_INTERP(ta, tb, tc);
                                 uv = vec3_scale(uv, 1.0/interp_recip_z);
 
-                                Vec3 interp_light_proj = vec3_scale(
-                                        vec3_add(
-                                                vec3_scale(a_light_proj, Ea),
-                                                vec3_add(
-                                                        vec3_scale(b_light_proj, Eb),
-                                                        vec3_scale(c_light_proj, Ec)
-                                                )
-                                        ),
-                                        recip_area
-                                );
+                                Vec3 interp_light_proj = VEC_INTERP(a_light_proj, b_light_proj, c_light_proj);
                                 interp_light_proj = vec3_scale(interp_light_proj, 1.0/interp_recip_z);
                                 interp_light_proj = m4v3_mul(g_viewport, persp(interp_light_proj));
 
-                                double light_pixel = 0.1;
+                                double light_pixel = 0.05;
                                 if (smap_read(light->shadow_map, interp_light_proj.x, interp_light_proj.y) <= interp_light_proj.z + 0.05) {
-                                        light_pixel = recip_area * (Ea*light_a + Eb*light_b + Ec*light_c);
+                                        light_pixel = INTERP(light_a, light_b, light_c);
                                 }
 
                                 Vec3 colour = sample_texture(model->texture, uv.x, uv.y);
@@ -274,6 +257,9 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
                 Eb = Eb_x0 -= Bb;
                 Ec = Ec_x0 -= Bc;
         }
+
+        #undef INTERP
+        #undef VEC_INTERP
 }
 
 //
@@ -437,7 +423,10 @@ void draw_smap(Shadow_Map *smap, uint8_t *pixels) {
 }
 
 void render_axes(Camera *cam) {
-        Vec3 o = VEC3(0, 0, 0), x = VEC3(0.1, 0, 0), y = VEC3(0, 0.1, 0), z = VEC3(0, 0, 0.1);
+        Vec3 o = VEC3(0.0, 0.0, 0.0);
+        Vec3 x = VEC3(0.1, 0.0, 0.0);
+        Vec3 y = VEC3(0.0, 0.1, 0.0);
+        Vec3 z = VEC3(0.0, 0.0, 0.1);
 
         o = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, o)));
         x = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, x)));
@@ -511,7 +500,7 @@ int main(int argc, char **argv) {
                         }
                 }
 
-                g_light.pos = VEC3(0.4*sin(i), 1.5, 0.4*cos(i));
+                g_light.pos = VEC3(1.5*sin(i), 0, 1.5*cos(i));
                 g_light.subject = VEC3(0, 0, 0);
                 g_light.up = VEC3(0, 1, 0);
                 set_light_view(&g_light);
