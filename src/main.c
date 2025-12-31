@@ -1,8 +1,9 @@
 // @TODO start using a Scene object to organise everything instead of just rendering it separately
-// @TODO move backface culling etc. code from render_model to render_face to simplify both functions
 // @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write a general sampling functions for 0,0 @ bottom left / 0,0 @ center
 // @TODO handle asset loading failures with default assets
 // @TODO better camera - need inverse of camera transform to rotate in view space rather than world space
+// @TODO phong lighting w/ normal maps
+// @TODO serious OBJ parser
 
 #include <math.h>
 #include <stdio.h>
@@ -51,8 +52,8 @@ Light g_light = {
         .intensity = 1.0
 };
 
-const int g_window_width = 600;
-const int g_window_height = 600;
+const int g_window_width = 1000;
+const int g_window_height = 1000;
 const int g_min_x = -g_window_width  / 2;
 const int g_min_y = -g_window_height / 2;
 const int g_max_x =  g_window_width  / 2 - 1;
@@ -150,9 +151,35 @@ int out_of_view(Vec3 v) {
 //
 // render_face - renders a single face in a model to the framebuffer, performs texture mapping & Gouraud shading
 //
-void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec3 lb, Vec3 lc, Face *f, Vec3 light_pos, Light *light) {
+void render_face(Face *f, Model *model, Camera *cam, Light *light) {
+        Vec3 *v = model->obj->vertices;
         Vec3 *vt = model->obj->uvs;
         Vec3 *vn = model->obj->norms;
+
+        Vec3 a = v[f->v0[VERTEX]];
+        Vec3 b = v[f->v1[VERTEX]];
+        Vec3 c = v[f->v2[VERTEX]];
+
+        Vec3 a_lightview = m4v3_mul(g_light.view_mat, a);
+        Vec3 b_lightview = m4v3_mul(g_light.view_mat, b);
+        Vec3 c_lightview = m4v3_mul(g_light.view_mat, c);
+
+        a = m4v3_mul(cam->view_mat, a);
+        b = m4v3_mul(cam->view_mat, b);
+        c = m4v3_mul(cam->view_mat, c);
+
+        if (a.z > 0 || b.z > 0 || c.z > 0) {
+                return;
+        }
+
+        a = persp(a);
+        b = persp(b);
+        c = persp(c);
+
+        Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
+        if (face_norm.z <= 0) {
+                return;
+        }
 
         double a_recip_z = 1.0/a.z;
         double b_recip_z = 1.0/b.z;
@@ -166,9 +193,15 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
         Vec3 nb = m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]);
         Vec3 nc = m4v3_mul(cam->inv_tr, vn[f->v2[NORM]]);
 
-        Vec3 a_to_light = vec3_sub(light_pos, a);
-        Vec3 b_to_light = vec3_sub(light_pos, b);
-        Vec3 c_to_light = vec3_sub(light_pos, c);
+        Vec3 light_in_view = m4v3_mul(cam->view_mat, g_light.pos);
+
+        Vec3 a_to_light = vec3_sub(light_in_view, a);
+        Vec3 b_to_light = vec3_sub(light_in_view, b);
+        Vec3 c_to_light = vec3_sub(light_in_view, c);
+
+        Vec3 a_light_proj = vec3_scale(a_lightview, a_recip_z);
+        Vec3 b_light_proj = vec3_scale(b_lightview, b_recip_z);
+        Vec3 c_light_proj = vec3_scale(c_lightview, c_recip_z);
 
         double light_a = attenuate(vec3_dot(na, unit(a_to_light)), vec3_norm(a_to_light));
         double light_b = attenuate(vec3_dot(nb, unit(b_to_light)), vec3_norm(b_to_light));
@@ -177,10 +210,6 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
         a = m4v3_mul(g_viewport, a);
         b = m4v3_mul(g_viewport, b);
         c = m4v3_mul(g_viewport, c);
-
-        Vec3 a_light_proj = vec3_scale(la, a_recip_z);
-        Vec3 b_light_proj = vec3_scale(lb, b_recip_z);
-        Vec3 c_light_proj = vec3_scale(lc, c_recip_z);
 
         double recip_area = 1.0/signed_tri_area2(a, b, c);
 
@@ -235,7 +264,7 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
                                 interp_light_proj = vec3_scale(interp_light_proj, 1.0/interp_recip_z);
                                 interp_light_proj = m4v3_mul(g_viewport, persp(interp_light_proj));
 
-                                double light_pixel = 0.05;
+                                double light_pixel = 0.1;
                                 if (smap_read(light->shadow_map, interp_light_proj.x, interp_light_proj.y) <= interp_light_proj.z + 0.05) {
                                         light_pixel = INTERP(light_a, light_b, light_c);
                                 }
@@ -263,9 +292,24 @@ void render_face(Model *model, Camera *cam, Vec3 a, Vec3 b, Vec3 c, Vec3 la, Vec
 }
 
 //
-// render_smap_face - renders a single face in a model to a shadow map
+// render_face_smap - renders a single face in a model to a shadow map
 //
-void render_smap_face(Light *light, Vec3 a, Vec3 b, Vec3 c) {
+void render_face_smap(Face *f, Model *model, Light *light) {
+        Vec3 *v = model->obj->vertices;
+
+        Vec3 a = persp(m4v3_mul(light->view_mat, v[f->v0[VERTEX]]));
+        Vec3 b = persp(m4v3_mul(light->view_mat, v[f->v1[VERTEX]]));
+        Vec3 c = persp(m4v3_mul(light->view_mat, v[f->v2[VERTEX]]));
+
+        if (a.z > 0 || b.z > 0 || c.z > 0) {
+                return;
+        }
+
+        Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
+        if (face_norm.z <= 0) {
+                return;
+        }
+
         a = m4v3_mul(g_viewport, a);
         b = m4v3_mul(g_viewport, b);
         c = m4v3_mul(g_viewport, c);
@@ -327,44 +371,10 @@ void render_smap_face(Light *light, Vec3 a, Vec3 b, Vec3 c) {
 //
 void render_model(Model *model, Camera *cam) {
         Obj *obj = model->obj;
-        Vec3 *v = obj->vertices;
         Face *f = obj->faces;
 
-        Vec3 light_in_view = m4v3_mul(cam->view_mat, g_light.pos);
-
         for (int i = 0; i < obj->face_count; ++i) {
-                Vec3 a = v[f[i].v0[VERTEX]];
-                Vec3 b = v[f[i].v1[VERTEX]];
-                Vec3 c = v[f[i].v2[VERTEX]];
-
-                Vec3 la = m4v3_mul(g_light.view_mat, a);
-                Vec3 lb = m4v3_mul(g_light.view_mat, b);
-                Vec3 lc = m4v3_mul(g_light.view_mat, c);
-
-                a = m4v3_mul(cam->view_mat, a);
-                b = m4v3_mul(cam->view_mat, b);
-                c = m4v3_mul(cam->view_mat, c);
-
-                if (a.z > 0 || b.z > 0 || c.z > 0) {
-                        continue;
-                }
-
-                a = persp(a);
-                b = persp(b);
-                c = persp(c);
-
-                Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
-                if (face_norm.z <= 0) {
-                        continue;
-                }
-
-#ifdef WIREFRAME
-                line(a, b, 0xff);
-                line(b, c, 0xff);
-                line(c, a, 0xff);
-#else
-                render_face(model, cam, a, b, c, la, lb, lc, &f[i], light_in_view, &g_light);
-#endif
+                render_face(&f[i], model, cam, &g_light);
         }
 }
 
@@ -377,20 +387,7 @@ void render_model_smap(Model *model, Light *light) {
         Face *f = obj->faces;
 
         for (int i = 0; i < obj->face_count; ++i) {
-                Vec3 a = persp(m4v3_mul(light->view_mat, v[f[i].v0[VERTEX]]));
-                Vec3 b = persp(m4v3_mul(light->view_mat, v[f[i].v1[VERTEX]]));
-                Vec3 c = persp(m4v3_mul(light->view_mat, v[f[i].v2[VERTEX]]));
-
-                if (a.z > 0 || b.z > 0 || c.z > 0) {
-                        continue;
-                }
-
-                Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
-                if (face_norm.z <= 0) {
-                        continue;
-                }
-
-                render_smap_face(light, a, b, c);
+                render_face_smap(&f[i], model, light);
         }
 }
 
@@ -512,6 +509,8 @@ int main(int argc, char **argv) {
         SDL_WarpMouseInWindow(g_window, g_window_width/2, g_window_height/2);
         SDL_SetRelativeMouseMode(SDL_TRUE);
 
+        const double mouse_sens = 0.01;
+
         double curs_dx = 0;
         double curs_dy = 0;
 
@@ -531,8 +530,8 @@ int main(int argc, char **argv) {
                         }
 
                         if (event.type == SDL_MOUSEMOTION) {
-                                curs_dx = (double)event.motion.xrel/g_window_width;
-                                curs_dy = (double)event.motion.yrel/g_window_height;
+                                curs_dx = mouse_sens * (double)event.motion.xrel;
+                                curs_dy = mouse_sens * (double)event.motion.yrel;
                         }
                 }
 
