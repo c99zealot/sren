@@ -6,6 +6,14 @@
         #include <stdint.h>
         #include <stddef.h>
 
+        #define VEC3(x, y, z) ((Vec3){(x), (y), (z)})
+        #define VEC4(x, y, z) ((Vec4){(x), (y), (z), (w)})
+
+        #define fmt_vec3 "(%f, %f, %f)"
+        #define fmt_vec4 "(%f, %f, %f, %f)"
+        #define fmt_mat3 "%f, %f, %f\n%f, %f, %f\n%f, %f, %f"
+        #define fmt_mat4 "%f, %f, %f, %f\n%f, %f, %f, %f\n%f, %f, %f, %f\n%f, %f, %f, %f"
+
         enum {
                 VERTEX = 0,
                 UV     = 1,
@@ -85,9 +93,6 @@
                 size_t model_count;
                 size_t light_count;
         } Scene;
-
-        #define VEC3(x, y, z) ((Vec3){(x), (y), (z)})
-        #define VEC4(x, y, z) ((Vec4){(x), (y), (z), (w)})
 
         //
         // cvec3s_to_mat3 - constructs a 3x3 matrix from three 3D column vectors

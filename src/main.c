@@ -1,8 +1,8 @@
-// @TODO Scene object
+// @TODO start using a Scene object to organise everything instead of just rendering it separately
 // @TODO move backface culling etc. code from render_model to render_face to simplify both functions
 // @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write a general sampling functions for 0,0 @ bottom left / 0,0 @ center
-// @TODO also start using a Scene object to organise everything instead of just rendering it separately
 // @TODO handle asset loading failures with default assets
+// @TODO better camera - need inverse of camera transform to rotate in view space rather than world space
 
 #include <math.h>
 #include <stdio.h>
@@ -428,15 +428,44 @@ void render_axes(Camera *cam) {
         Vec3 y = VEC3(0.0, 0.1, 0.0);
         Vec3 z = VEC3(0.0, 0.0, 0.1);
 
-        o = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, o)));
-        x = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, x)));
-        y = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, y)));
-        z = m4v3_mul(g_viewport, persp(m4v3_mul(cam->view_mat, z)));
+        o = m4v3_mul(cam->view_mat, o);
+        x = m4v3_mul(cam->view_mat, x);
+        y = m4v3_mul(cam->view_mat, y);
+        z = m4v3_mul(cam->view_mat, z);
+
+        if (o.z > 0 || x.z > 0 || y.z > 0 || z.z > 0) {
+                return;
+        }
+
+        o = m4v3_mul(g_viewport, persp(o));
+        x = m4v3_mul(g_viewport, persp(x));
+        y = m4v3_mul(g_viewport, persp(y));
+        z = m4v3_mul(g_viewport, persp(z));
+
+        if (out_of_view(o) || out_of_view(x) || out_of_view(y) || out_of_view(z)) {
+                return;
+        }
 
         line(o, x, 0xff0000);
         line(o, y, 0x00ff00);
         line(o, z, 0x0000ff);
 }
+
+#if 0
+        SDL_Window *smap_window = SDL_CreateWindow("sren_smap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
+        if (smap_window == NULL) {
+                fprintf(stderr, "SDL_CreateWindow failure: %s\n", SDL_GetError());
+                SDL_Quit();
+                return -1;
+        }
+
+        SDL_Surface *smap_screen = SDL_GetWindowSurface(smap_window);
+        if (smap_screen == NULL) {
+                fprintf(stderr, "SDL_GetWindowSurface failure: %s\n", SDL_GetError());
+                SDL_Quit();
+                return -1;
+        }
+#endif
 
 int main(int argc, char **argv) {
         if (argc < 3) {
@@ -474,43 +503,87 @@ int main(int argc, char **argv) {
 
         g_light.shadow_map = mk_smap(&render_arena, g_window_width, g_window_height);
 
-#if 0
-        SDL_Window *smap_window = SDL_CreateWindow("sren_smap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
-        if (smap_window == NULL) {
-                fprintf(stderr, "SDL_CreateWindow failure: %s\n", SDL_GetError());
-                SDL_Quit();
-                return -1;
-        }
+        Camera cam = {
+                .pos = VEC3(0, 0, 2),
+                .subject = VEC3(0, 0, 1),
+                .up = VEC3(0, 1, 0)
+        };
 
-        SDL_Surface *smap_screen = SDL_GetWindowSurface(smap_window);
-        if (smap_screen == NULL) {
-                fprintf(stderr, "SDL_GetWindowSurface failure: %s\n", SDL_GetError());
-                SDL_Quit();
-                return -1;
-        }
-#endif
+        SDL_WarpMouseInWindow(g_window, g_window_width/2, g_window_height/2);
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+
+        double curs_dx = 0;
+        double curs_dy = 0;
+
+        double cam_vel_x = 0;
+        double cam_vel_y = 0;
+        double cam_vel_z = 0;
 
         double i = 0.0;
         for (;;) {
+                curs_dx = 0;
+                curs_dy = 0;
+
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
-                        switch (event.type) {
-                                case SDL_QUIT:
-                                        goto _exit;
+                        if (event.type == SDL_QUIT) {
+                                goto _exit;
+                        }
+
+                        if (event.type == SDL_MOUSEMOTION) {
+                                curs_dx = (double)event.motion.xrel/g_window_width;
+                                curs_dy = (double)event.motion.yrel/g_window_height;
                         }
                 }
 
-                g_light.pos = VEC3(1.5*sin(i), 0, 1.5*cos(i));
+                const uint8_t *keys = SDL_GetKeyboardState(NULL);
+
+                cam_vel_x = keys[SDL_SCANCODE_A] * -0.02;
+                cam_vel_y = keys[SDL_SCANCODE_LCTRL] * -0.02;
+                cam_vel_z = keys[SDL_SCANCODE_W] * -0.02;
+
+                cam_vel_x += keys[SDL_SCANCODE_D] * 0.02;
+                cam_vel_y += keys[SDL_SCANCODE_LSHIFT] * 0.02;
+                cam_vel_z += keys[SDL_SCANCODE_S] * 0.02;
+
+                if (keys[SDL_SCANCODE_ESCAPE]) {
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                }
+
+                g_light.pos = VEC3(1.5*sin(i), 1, 1.5*cos(i));
                 g_light.subject = VEC3(0, 0, 0);
                 g_light.up = VEC3(0, 1, 0);
                 set_light_view(&g_light);
                 reset_smap(&g_light);
 
-                Camera cam = {
-                        .pos     = VEC3(1.5*cos(0.4*i), 0.8*sin(0.8*i), 1.5*sin(0.4*i)),
-                        .subject = VEC3(0, 0, 0),
-                        .up      = VEC3(0, 1, 0)
+                double hack = (cam.subject.z - cam.pos.z < 0) ? 1 : -1;
+                double cx = cos(-curs_dx);
+                double cy = cos(-curs_dy * hack);
+                double sx = sin(-curs_dx);
+                double sy = sin(-curs_dy * hack);
+
+                Mat3 cam_rot = {
+                        cx,     0,   sx,
+                        sy*sx,  cy, -sy*cx,
+                        -cy*sx, sy,  cy*cx
                 };
+
+                Vec3 cam_to_subj = vec3_sub(cam.subject, cam.pos);
+                cam_to_subj = mv3_mul(cam_rot, cam_to_subj);
+                cam.subject = vec3_add(cam.pos, cam_to_subj);
+
+                Vec3 cam_basis_z = unit(vec3_sub(cam.pos, cam.subject));
+                Vec3 cam_basis_x = unit(cross(cam.up, cam_basis_z));
+                Vec3 cam_basis_y = cross(cam_basis_z, cam_basis_x);
+
+                cam_basis_x = vec3_scale(cam_basis_x, cam_vel_x);
+                cam_basis_y = vec3_scale(cam_basis_y, cam_vel_y);
+                cam_basis_z = vec3_scale(cam_basis_z, cam_vel_z);
+
+                Vec3 cam_delta = vec3_add(vec3_add(cam_basis_x, cam_basis_y), cam_basis_z);
+                cam.pos = vec3_add(cam.pos, cam_delta);
+                cam.subject = vec3_add(cam.subject, cam_delta);
+
                 set_view(&cam);
 
                 reset_dbuf();
@@ -536,7 +609,7 @@ int main(int argc, char **argv) {
                 }
 
                 double elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
-                printf(" %f fps [frame time: %.4fms]\t\r", 1000 / elapsed_ms, elapsed_ms);
+                printf(" %f fps [frame time: %.4fms]\t\t\r", 1000 / elapsed_ms, elapsed_ms);
                 fflush(stdout);
 
                 SDL_UpdateWindowSurface(g_window);
