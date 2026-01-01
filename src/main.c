@@ -1,9 +1,10 @@
 // @TODO start using a Scene object to organise everything instead of just rendering it separately
-// @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write a general sampling functions for 0,0 @ bottom left / 0,0 @ center
+// @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write general sampling functions for 0,0 @ bottom left / 0,0 @ center
 // @TODO handle asset loading failures with default assets
-// @TODO better camera - need inverse of camera transform to rotate in view space rather than world space
 // @TODO phong lighting w/ normal maps
 // @TODO serious OBJ parser
+// @TODO make matrices structs so we can use =
+// @TODO full (letters & numbers) text rendering so we can do render_text("Hello123", pos, size), render_number(12345, pos, size) etc.
 
 #include <math.h>
 #include <stdio.h>
@@ -64,6 +65,32 @@ Mat4 g_viewport = {
         0.0,                    (g_window_height/2 - 1), 0.0, 0.0,
         0.0,                    0.0,                     1.0, 0.0,
         0.0,                    0.0,                     0.0, 1.0
+};
+
+enum {
+        DIG_0,
+        DIG_1,
+        DIG_2,
+        DIG_3,
+        DIG_4,
+        DIG_5,
+        DIG_6,
+        DIG_7,
+        DIG_8,
+        DIG_9,
+};
+
+int g_digit_seqs[][8] = {
+        [DIG_0] = {4, 0, 1, 5, 4, 1,       -1},
+        [DIG_1] = {1, 5,                   -1},
+        [DIG_2] = {0, 1, 3, 2, 4, 5,       -1},
+        [DIG_3] = {0, 1, 3, 2, 3, 5, 4,    -1},
+        [DIG_4] = {0, 2, 3, 1, 5,          -1},
+        [DIG_5] = {1, 0, 2, 3, 5, 4,       -1},
+        [DIG_6] = {1, 0, 2, 3, 5, 4, 2,    -1},
+        [DIG_7] = {0, 1, 4,                -1},
+        [DIG_8] = {3, 2, 4, 5, 1, 0, 2,    -1},
+        [DIG_9] = {3, 2, 0, 1, 5, 4,       -1},
 };
 
 //
@@ -127,6 +154,27 @@ void line(Vec3 a, Vec3 b, int colour) {
                         point(_x, _y, colour);
                 }
                 _y += m;
+        }
+}
+
+void render_digit(char digit, Vec3 pos, double unit) {
+        Vec3 points[] = {
+                pos,
+                VEC3(pos.x + unit, pos.y, 0),
+                VEC3(pos.x, pos.y - unit, 0),
+                VEC3(pos.x + unit, pos.y - unit, 0),
+                VEC3(pos.x, pos.y - 1.5*unit, 0),
+                VEC3(pos.x + unit, pos.y - 1.5*unit, 0),
+        };
+
+        for (int i = 0; i < 6; ++i) {
+                points[i] = m4v3_mul(g_viewport, points[i]);
+        }
+
+        Vec3 line_start = points[g_digit_seqs[digit][0]];
+        for (int i = 1; g_digit_seqs[digit][i] != -1; ++i) {
+                line(line_start, points[g_digit_seqs[digit][i]], 0x00FF00);
+                line_start = points[g_digit_seqs[digit][i]];
         }
 }
 
@@ -218,10 +266,10 @@ void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         int min_y = MIN3(a.y, b.y, c.y);
         int max_y = MAX3(a.y, b.y, c.y);
 
-        min_x = MAX(min_x, -g_window_width/2);
-        min_y = MAX(min_y, -g_window_height/2);
-        max_x = MIN(max_x, g_window_width/2 - 1);
-        max_y = MIN(max_y, g_window_height/2 - 1);
+        min_x = MAX(min_x, g_min_x);
+        min_y = MAX(min_y, g_min_y);
+        max_x = MIN(max_x, g_max_x);
+        max_y = MIN(max_y, g_max_y);
 
         double Aa = b.y - c.y;
         double Ab = c.y - a.y;
@@ -505,6 +553,7 @@ int main(int argc, char **argv) {
                 .subject = VEC3(0, 0, 1),
                 .up = VEC3(0, 1, 0)
         };
+        init_cam(&cam);
 
         SDL_WarpMouseInWindow(g_window, g_window_width/2, g_window_height/2);
         SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -514,9 +563,10 @@ int main(int argc, char **argv) {
         double curs_dx = 0;
         double curs_dy = 0;
 
-        double cam_vel_x = 0;
-        double cam_vel_y = 0;
-        double cam_vel_z = 0;
+        Vec3 cam_vel = VEC3(0, 0, 0);
+
+        int frames_drawn = 0;
+        int fps = 0;
 
         double i = 0.0;
         for (;;) {
@@ -537,13 +587,13 @@ int main(int argc, char **argv) {
 
                 const uint8_t *keys = SDL_GetKeyboardState(NULL);
 
-                cam_vel_x = keys[SDL_SCANCODE_A] * -0.02;
-                cam_vel_y = keys[SDL_SCANCODE_LCTRL] * -0.02;
-                cam_vel_z = keys[SDL_SCANCODE_W] * -0.02;
+                cam_vel.x = keys[SDL_SCANCODE_A] * -0.02;
+                cam_vel.y = keys[SDL_SCANCODE_LCTRL] * -0.02;
+                cam_vel.z = keys[SDL_SCANCODE_W] * -0.02;
 
-                cam_vel_x += keys[SDL_SCANCODE_D] * 0.02;
-                cam_vel_y += keys[SDL_SCANCODE_LSHIFT] * 0.02;
-                cam_vel_z += keys[SDL_SCANCODE_S] * 0.02;
+                cam_vel.x += keys[SDL_SCANCODE_D] * 0.02;
+                cam_vel.y += keys[SDL_SCANCODE_LSHIFT] * 0.02;
+                cam_vel.z += keys[SDL_SCANCODE_S] * 0.02;
 
                 if (keys[SDL_SCANCODE_ESCAPE]) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -555,11 +605,10 @@ int main(int argc, char **argv) {
                 set_light_view(&g_light);
                 reset_smap(&g_light);
 
-                double hack = (cam.subject.z - cam.pos.z < 0) ? 1 : -1;
                 double cx = cos(-curs_dx);
-                double cy = cos(-curs_dy * hack);
+                double cy = cos(-curs_dy);
                 double sx = sin(-curs_dx);
-                double sy = sin(-curs_dy * hack);
+                double sy = sin(-curs_dy);
 
                 Mat3 cam_rot = {
                         cx,     0,   sx,
@@ -567,23 +616,7 @@ int main(int argc, char **argv) {
                         -cy*sx, sy,  cy*cx
                 };
 
-                Vec3 cam_to_subj = vec3_sub(cam.subject, cam.pos);
-                cam_to_subj = mv3_mul(cam_rot, cam_to_subj);
-                cam.subject = vec3_add(cam.pos, cam_to_subj);
-
-                Vec3 cam_basis_z = unit(vec3_sub(cam.pos, cam.subject));
-                Vec3 cam_basis_x = unit(cross(cam.up, cam_basis_z));
-                Vec3 cam_basis_y = cross(cam_basis_z, cam_basis_x);
-
-                cam_basis_x = vec3_scale(cam_basis_x, cam_vel_x);
-                cam_basis_y = vec3_scale(cam_basis_y, cam_vel_y);
-                cam_basis_z = vec3_scale(cam_basis_z, cam_vel_z);
-
-                Vec3 cam_delta = vec3_add(vec3_add(cam_basis_x, cam_basis_y), cam_basis_z);
-                cam.pos = vec3_add(cam.pos, cam_delta);
-                cam.subject = vec3_add(cam.subject, cam_delta);
-
-                set_view(&cam);
+                move_cam(&cam, cam_rot, cam_vel);
 
                 reset_dbuf();
 
@@ -607,9 +640,14 @@ int main(int argc, char **argv) {
                         point(g_light.pos.x, g_light.pos.y, RGBf(1.0, 1.0, 1.0));
                 }
 
-                double elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
-                printf(" %f fps [frame time: %.4fms]\t\t\r", 1000 / elapsed_ms, elapsed_ms);
-                fflush(stdout);
+                if (frames_drawn % 128 == 0) {
+                        double elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
+                        fps = 1000 / elapsed_ms;
+                }
+
+                render_digit((fps % 1000) / 100, VEC3(-0.95, 0.95, 0), 0.05);
+                render_digit((fps % 100) / 10, VEC3(-0.89, 0.95, 0), 0.05);
+                render_digit(fps % 10,  VEC3(-0.83, 0.95, 0), 0.05);
 
                 SDL_UpdateWindowSurface(g_window);
 #if 0
@@ -618,6 +656,8 @@ int main(int argc, char **argv) {
 
                 memset(g_frame_buffer, 0, g_window_width*g_window_height*sizeof(uint32_t));
                 i += 0.01;
+
+                ++frames_drawn;
         }
 
 _exit:

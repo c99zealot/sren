@@ -52,11 +52,15 @@
         } Shadow_Map;
 
         typedef struct {
+                Mat4 view_mat;
+                Mat4 inv_tr;
+
                 Vec3 pos;
                 Vec3 subject;
                 Vec3 up;
-                Mat4 view_mat;
-                Mat4 inv_tr;
+                Vec3 l;
+                Vec3 m;
+                Vec3 n;
         } Camera;
 
         typedef struct {
@@ -381,18 +385,58 @@
         }
 
         //
-        // set_view @TODO bad name - given a Camera, computes its view matrix and inverse transpose
+        // init_cam - initialises a Camera, preparing it for use
         //
-        static inline void set_view(Camera *cam) {
-                Vec3 n = unit(vec3_sub(cam->pos, cam->subject));
-                Vec3 l = unit(cross(cam->up, n));
-                Vec3 m = cross(n, l);
+        static inline void init_cam(Camera *cam) {
+                cam->n = unit(vec3_sub(cam->pos, cam->subject));
+                cam->l = unit(cross(cam->up, cam->n));
+                cam->m = cross(cam->n, cam->l);
 
                 Mat4 view = {
-                        l.x,  l.y,  l.z, -vec3_dot(l, cam->pos),
-                        m.x,  m.y,  m.z, -vec3_dot(m, cam->pos),
-                        n.x,  n.y,  n.z, -vec3_dot(n, cam->pos),
-                        0.0,  0.0,  0.0,  1.0
+                        cam->l.x,  cam->l.y,  cam->l.z, -vec3_dot(cam->l, cam->pos),
+                        cam->m.x,  cam->m.y,  cam->m.z, -vec3_dot(cam->m, cam->pos),
+                        cam->n.x,  cam->n.y,  cam->n.z, -vec3_dot(cam->n, cam->pos),
+                        0.0,       0.0,       0.0,       1.0
+                };
+
+                memcpy(cam->view_mat, view, sizeof(Mat4));
+                m4_inverse_transpose(cam->inv_tr, cam->view_mat);
+        }
+
+        //
+        // move_cam - rotates and displaces a Camera
+        //
+        static inline void move_cam(Camera *cam, Mat3 rot, Vec3 disp) {
+                Mat4 view_inv = {
+                        cam->l.x, cam->m.x, cam->n.x, cam->pos.x,
+                        cam->l.y, cam->m.y, cam->n.y, cam->pos.y,
+                        cam->l.z, cam->m.z, cam->n.z, cam->pos.z,
+                        0.0,      0.0,      0.0,      1.0
+                };
+
+                cam->subject = m4v3_mul(cam->view_mat, cam->subject);
+                cam->subject = mv3_mul(rot, cam->subject);
+                cam->subject = m4v3_mul(view_inv, cam->subject);
+
+                cam->n = unit(vec3_sub(cam->pos, cam->subject));
+                cam->l = unit(cross(cam->up, cam->n));
+                cam->m = cross(cam->n, cam->l);
+
+                disp = vec3_add(
+                        vec3_scale(cam->l, disp.x),
+                        vec3_add(
+                                vec3_scale(cam->m, disp.y),
+                                vec3_scale(cam->n, disp.z)
+                        )
+                );
+                cam->pos = vec3_add(cam->pos, disp);
+                cam->subject = vec3_add(cam->subject, disp);
+
+                Mat4 view = {
+                        cam->l.x, cam->l.y, cam->l.z, -vec3_dot(cam->l, cam->pos),
+                        cam->m.x, cam->m.y, cam->m.z, -vec3_dot(cam->m, cam->pos),
+                        cam->n.x, cam->n.y, cam->n.z, -vec3_dot(cam->n, cam->pos),
+                        0.0,      0.0,      0.0,       1.0
                 };
 
                 memcpy(cam->view_mat, view, sizeof(Mat4));
@@ -426,10 +470,12 @@
 
                 size_t i = v*texture->width + u;
 
+                double one_255th = 1.0/255;
+
                 return (Vec3){
-                        .x = (double)texture->data[i * 3*sizeof(uint8_t)]/255,
-                        .y = (double)texture->data[i * 3*sizeof(uint8_t) + 1]/255,
-                        .z = (double)texture->data[i * 3*sizeof(uint8_t) + 2]/255
+                        .x = (double)texture->data[i * 3*sizeof(uint8_t)]     * one_255th,
+                        .y = (double)texture->data[i * 3*sizeof(uint8_t) + 1] * one_255th,
+                        .z = (double)texture->data[i * 3*sizeof(uint8_t) + 2] * one_255th
                 };
         }
 
