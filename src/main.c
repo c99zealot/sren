@@ -4,7 +4,7 @@
 // @TODO phong lighting w/ normal maps
 // @TODO serious OBJ parser
 // @TODO make matrices structs so we can use =
-// @TODO full (letters & numbers) text rendering so we can do render_text("Hello123", pos, size), render_number(12345, pos, size) etc.
+// @TODO support more characters in render_text and render ? for unsupported characters, also prevent drawing glyphs outside of the framebuffer
 
 #include <math.h>
 #include <stdio.h>
@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 #include <SDL2/SDL.h>
 
@@ -44,7 +45,7 @@
 
 SDL_Window  *g_window;
 SDL_Surface *g_screen;
-uint32_t *g_frame_buffer;
+uint32_t *g_framebuffer;
 double *g_depth_buffer;
 
 Light g_light = {
@@ -68,36 +69,107 @@ Mat4 g_viewport = {
 };
 
 enum {
-        DIG_0,
-        DIG_1,
-        DIG_2,
-        DIG_3,
-        DIG_4,
-        DIG_5,
-        DIG_6,
-        DIG_7,
-        DIG_8,
-        DIG_9,
+        GLYPH_0,
+        GLYPH_1,
+        GLYPH_2,
+        GLYPH_3,
+        GLYPH_4,
+        GLYPH_5,
+        GLYPH_6,
+        GLYPH_7,
+        GLYPH_8,
+        GLYPH_9,
+
+        GLYPH_A = 'a',
+        GLYPH_B = 'b',
+        GLYPH_C = 'c',
+        GLYPH_D = 'd',
+        GLYPH_E = 'e',
+        GLYPH_F = 'f',
+        GLYPH_G = 'g',
+        GLYPH_H = 'h',
+        GLYPH_I = 'i',
+        GLYPH_J = 'j',
+        GLYPH_K = 'k',
+        GLYPH_L = 'l',
+        GLYPH_M = 'm',
+        GLYPH_N = 'n',
+        GLYPH_O = 'o',
+        GLYPH_P = 'p',
+        GLYPH_Q = 'q',
+        GLYPH_R = 'r',
+        GLYPH_S = 's',
+        GLYPH_T = 't',
+        GLYPH_U = 'u',
+        GLYPH_V = 'v',
+        GLYPH_W = 'w',
+        GLYPH_X = 'x',
+        GLYPH_Y = 'y',
+        GLYPH_Z = 'z',
+
+        GLYPH_DOT        = '.',
+        GLYPH_SPACE      = ' ',
+        GLYPH_MINUS      = '-',
+        GLYPH_COMMA      = ',',
+        GLYPH_RBRACKET   = ')',
+        GLYPH_LBRACKET   = '(',
+        GLYPH_QUESTION   = '?',
+        GLYPH_UNDERSCORE = '_',
 };
 
-int g_digit_seqs[][8] = {
-        [DIG_0] = {4, 0, 1, 5, 4, 1,       -1},
-        [DIG_1] = {1, 5,                   -1},
-        [DIG_2] = {0, 1, 3, 2, 4, 5,       -1},
-        [DIG_3] = {0, 1, 3, 2, 3, 5, 4,    -1},
-        [DIG_4] = {0, 2, 3, 1, 5,          -1},
-        [DIG_5] = {1, 0, 2, 3, 5, 4,       -1},
-        [DIG_6] = {1, 0, 2, 3, 5, 4, 2,    -1},
-        [DIG_7] = {0, 1, 4,                -1},
-        [DIG_8] = {3, 2, 4, 5, 1, 0, 2,    -1},
-        [DIG_9] = {3, 2, 0, 1, 5, 4,       -1},
+int g_glyph_seqs[][10] = {
+        [GLYPH_0] = {9, 3, 5, 11, 9, 5,          -1},
+        [GLYPH_1] = {6, 4, 10, 9, 11,            -1},
+        [GLYPH_2] = {3, 5, 8, 6, 9, 11,          -1},
+        [GLYPH_3] = {3, 5, 8, 6, 8, 11, 9,       -1},
+        [GLYPH_4] = {11, 5, 6, 8,                -1},
+        [GLYPH_5] = {5, 3, 6, 8, 11, 9,          -1},
+        [GLYPH_6] = {5, 6, 8, 11, 9, 6,          -1},
+        [GLYPH_7] = {3, 5, 9,                    -1},
+        [GLYPH_8] = {8, 6, 3, 5, 11, 9, 6,       -1},
+        [GLYPH_9] = {5, 6, 3, 5, 8, 6, 8, 11, 9, -1},
+
+        [GLYPH_A] = {3, 5, 11, 9, 6, 8, -1},
+        [GLYPH_B] = {3, 9, 11, 8, 6,    -1},
+        [GLYPH_C] = {11, 9, 3, 5,       -1},
+        [GLYPH_D] = {5, 11, 9, 6, 8,    -1},
+        [GLYPH_E] = {11, 9, 3, 5, 6,    -1},
+        [GLYPH_F] = {5, 3, 6, 8, 6, 9,  -1},
+        [GLYPH_G] = {9, 11,5, 3, 6, 8,  -1},
+        [GLYPH_H] = {3, 9, 6, 8, 11,    -1},
+        [GLYPH_I] = {4, 10,             -1},
+        [GLYPH_J] = {4, 5, 11, 9,       -1},
+        [GLYPH_K] = {3, 9, 6, 11, 6, 5, -1},
+        [GLYPH_L] = {3, 9, 11,          -1},
+        [GLYPH_M] = {9, 3, 7, 5, 11,    -1},
+        [GLYPH_N] = {9, 3, 11, 5,       -1},
+        [GLYPH_O] = {9, 3, 5, 11, 9,    -1},
+        [GLYPH_P] = {9, 3, 5, 8, 6,     -1},
+        [GLYPH_Q] = {8, 10, 4, 3, 6, 7, -1},
+        [GLYPH_R] = {9, 6, 5,           -1},
+        [GLYPH_S] = {5, 3, 6, 8, 11, 9, -1},
+        [GLYPH_T] = {7, 6, 3, 9, 11,    -1},
+        [GLYPH_U] = {3, 9, 11, 5,       -1},
+        [GLYPH_V] = {3, 10, 5,          -1},
+        [GLYPH_W] = {3, 9, 7, 11, 5,    -1},
+        [GLYPH_X] = {9, 5, 7, 3, 11,    -1},
+        [GLYPH_Y] = {3, 7, 5, 7, 10,    -1},
+        [GLYPH_Z] = {3, 5, 9, 11,       -1},
+
+        [GLYPH_SPACE]    = {0,           -1},
+        [GLYPH_MINUS]    = {6, 8,        -1},
+        [GLYPH_COMMA]    = {7, 9,        -1},
+        [GLYPH_QUESTION] = {0,           -1},
+        [GLYPH_LBRACKET] = {2, 3, 6, 11, -1},
+        [GLYPH_RBRACKET] = {0, 5, 8, 9,  -1},
+        [GLYPH_DOT]      = {9, 9,        -1},
 };
 
 //
 // point - draws a point at (x, y) in the frame buffer
 //
 static inline void point(int x, int y, int colour) {
-        g_frame_buffer[SCREEN(x, y)] = colour;
+        g_framebuffer[SCREEN(x, y)] = colour;
 }
 
 //
@@ -134,6 +206,11 @@ static inline double smap_read(Shadow_Map *shadow_map, int x, int y) {
 // line - draws a line in the frame buffer from (ax, ay) to (bx, by)
 //
 void line(Vec3 a, Vec3 b, int colour) {
+        if (a.x == b.x && a.y == b.y) {
+                point(a.x, a.y, colour);
+                return;
+        }
+
         int steep = abs(a.y - b.y) > abs(a.x - b.x);
         if (steep) {
                 SWAP(int, a.x, a.y);
@@ -157,25 +234,152 @@ void line(Vec3 a, Vec3 b, int colour) {
         }
 }
 
-void render_digit(char digit, Vec3 pos, double unit) {
+//
+// render_glyph - renders a glyph to the framebuffer
+//
+Vec3 render_glyph(char glyph_id, Vec3 pos, double unit) {
         Vec3 points[] = {
                 pos,
                 VEC3(pos.x + unit, pos.y, 0),
+                VEC3(pos.x + 2*unit, pos.y, 0),
+
                 VEC3(pos.x, pos.y - unit, 0),
                 VEC3(pos.x + unit, pos.y - unit, 0),
-                VEC3(pos.x, pos.y - 1.5*unit, 0),
-                VEC3(pos.x + unit, pos.y - 1.5*unit, 0),
+                VEC3(pos.x + 2*unit, pos.y - unit, 0),
+
+                VEC3(pos.x, pos.y - 2*unit, 0),
+                VEC3(pos.x + unit, pos.y - 2*unit, 0),
+                VEC3(pos.x + 2*unit, pos.y - 2*unit, 0),
+
+                VEC3(pos.x, pos.y - 3*unit, 0),
+                VEC3(pos.x + unit, pos.y - 3*unit, 0),
+                VEC3(pos.x + 2*unit, pos.y - 3*unit, 0),
         };
 
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 12; ++i) {
                 points[i] = m4v3_mul(g_viewport, points[i]);
         }
 
-        Vec3 line_start = points[g_digit_seqs[digit][0]];
-        for (int i = 1; g_digit_seqs[digit][i] != -1; ++i) {
-                line(line_start, points[g_digit_seqs[digit][i]], 0x00FF00);
-                line_start = points[g_digit_seqs[digit][i]];
+        Vec3 line_start = points[g_glyph_seqs[glyph_id][0]];
+        for (int i = 1; g_glyph_seqs[glyph_id][i] != -1; ++i) {
+                line(line_start, points[g_glyph_seqs[glyph_id][i]], 0x00FF00);
+                line_start = points[g_glyph_seqs[glyph_id][i]];
         }
+
+        pos.x += ((glyph_id == GLYPH_DOT) ? 1 : 3) * unit;
+        return pos;
+}
+
+//
+// render_text_int - called by render_text to render integers as text to the framebuffer
+//
+Vec3 render_text_int(Vec3 pos, double unit, int d) {
+        if (d < 0) {
+                pos = render_glyph(GLYPH_MINUS, pos, unit);
+                d = -d;
+        }
+
+        int place_val = 1;
+        while (place_val < d) {
+                place_val *= 10;
+        }
+
+        if (place_val > d) {
+                place_val /= 10;
+        }
+
+        while (place_val >= 1) {
+                pos = render_glyph((d / place_val) % 10, pos, unit);
+                place_val /= 10;
+        }
+
+        return pos;
+}
+
+//
+// render_text_double - called by render_text to render doubles as text to the framebufer
+//
+Vec3 render_text_double(Vec3 pos, double unit, double f) {
+        if (f < 0) {
+                pos = render_glyph(GLYPH_MINUS, pos, unit);
+                f = -f;
+        }
+
+        long whole = (long)f;
+
+        if (whole == 0) {
+                pos = render_glyph(GLYPH_0, pos, unit);
+        }
+
+        int place_val = 1;
+        while (place_val < whole) {
+                place_val *= 10;
+        }
+
+        if (place_val > whole) {
+                place_val /= 10;
+        }
+
+        while (place_val >= 1) {
+                pos = render_glyph((whole / place_val) % 10, pos, unit);
+                place_val /= 10;
+        }
+
+        pos = render_glyph(GLYPH_DOT, pos, unit);
+
+        int max_digits = 2;
+        do {
+                f *= 10;
+                pos = render_glyph((long)f % 10, pos, unit);
+        } while (f > (long)f && max_digits-- > 1);
+
+        return pos;
+}
+
+//
+// render_text_vector - called by render_text to render a vector as text to the framebuffer
+//
+Vec3 render_text_vector(Vec3 pos, double unit, Vec3 v) {
+        pos = render_glyph(GLYPH_LBRACKET, pos, unit);
+        pos = render_text_double(pos, unit, v.x);
+        pos = render_glyph(GLYPH_COMMA, pos, unit);
+        pos = render_text_double(pos, unit, v.y);
+        pos = render_glyph(GLYPH_COMMA, pos, unit);
+        pos = render_text_double(pos, unit, v.z);
+        pos = render_glyph(GLYPH_RBRACKET, pos, unit);
+}
+
+//
+// render_text - renders formatted text to the framebuffer
+//
+Vec3 render_text(Vec3 pos, double unit, const char *fmt, ...) {
+        va_list arglist;
+        va_start(arglist, fmt);
+
+        Vec3 curs = pos;
+        for (int i = 0; fmt[i] != '\0'; ++i) {
+                if (fmt[i] == '\n') {
+                        curs.x = pos.x;
+                        curs.y -= 4*unit;
+                } else if (fmt[i] == '%') {
+                        ++i;
+                        if (fmt[i] == 'd') {
+                                curs = render_text_int(curs, unit, va_arg(arglist, int));
+                        } else if (fmt[i] == 'f') {
+                                curs = render_text_double(curs, unit, va_arg(arglist, double));
+                        } else if (fmt[i] == 'v') {
+                                curs = render_text_vector(curs, unit, va_arg(arglist, Vec3));
+                        } else if (fmt[i] == 's') {
+                                curs = render_text(curs, unit, va_arg(arglist, char*));
+                        }
+                } else {
+                        curs = render_glyph(fmt[i], curs, unit);
+                }
+        }
+
+        va_end(arglist);
+
+        return curs;
 }
 
 //
@@ -458,6 +662,7 @@ void reset_smap(Light *light) {
         }
 }
 
+#if 0
 void draw_smap(Shadow_Map *smap, uint8_t *pixels) {
         for (int i = 0; i < smap->width*smap->height; ++i) {
                 double d = (smap->data[i] + 4) / 8;
@@ -466,7 +671,11 @@ void draw_smap(Shadow_Map *smap, uint8_t *pixels) {
                 pixels += 4;
         }
 }
+#endif
 
+//
+// render_axes - renders portions of the xyz axes to the framebuffer
+//
 void render_axes(Camera *cam) {
         Vec3 o = VEC3(0.0, 0.0, 0.0);
         Vec3 x = VEC3(0.1, 0.0, 0.0);
@@ -544,7 +753,7 @@ int main(int argc, char **argv) {
                 SDL_Quit();
                 return -1;
         }
-        g_frame_buffer = g_screen->pixels;
+        g_framebuffer = g_screen->pixels;
 
         g_light.shadow_map = mk_smap(&render_arena, g_window_width, g_window_height);
 
@@ -566,7 +775,10 @@ int main(int argc, char **argv) {
         Vec3 cam_vel = VEC3(0, 0, 0);
 
         int frames_drawn = 0;
-        int fps = 0;
+        double fps = 0;
+        double elapsed_ms = 0;
+        int dig_counter = 0;
+        int letter_counter = 0;
 
         double i = 0.0;
         for (;;) {
@@ -632,6 +844,11 @@ int main(int argc, char **argv) {
                 render_model(floor_model, &cam);
                 render_model(main_model, &cam);
 
+                if (frames_drawn % 64 == 0) {
+                        elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
+                        fps = 1000 / elapsed_ms;
+                }
+
                 render_axes(&cam);
 
                 g_light.pos = m4v3_mul(g_viewport, persp(m4v3_mul(cam.view_mat, g_light.pos)));
@@ -640,21 +857,14 @@ int main(int argc, char **argv) {
                         point(g_light.pos.x, g_light.pos.y, RGBf(1.0, 1.0, 1.0));
                 }
 
-                if (frames_drawn % 128 == 0) {
-                        double elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
-                        fps = 1000 / elapsed_ms;
-                }
-
-                render_digit((fps % 1000) / 100, VEC3(-0.95, 0.95, 0), 0.05);
-                render_digit((fps % 100) / 10, VEC3(-0.89, 0.95, 0), 0.05);
-                render_digit(fps % 10,  VEC3(-0.83, 0.95, 0), 0.05);
+                render_text(VEC3(-0.95, 0.95, 0), 0.012, "-sren-\n%f fps\n%fms frame time\ncamera at %v", fps, elapsed_ms, cam.pos);
 
                 SDL_UpdateWindowSurface(g_window);
 #if 0
                 SDL_UpdateWindowSurface(smap_window);
 #endif
 
-                memset(g_frame_buffer, 0, g_window_width*g_window_height*sizeof(uint32_t));
+                memset(g_framebuffer, 0, g_window_width*g_window_height*sizeof(uint32_t));
                 i += 0.01;
 
                 ++frames_drawn;
