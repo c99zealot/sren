@@ -4,7 +4,7 @@
 // @TODO phong lighting w/ normal maps
 // @TODO serious OBJ parser
 // @TODO make matrices structs so we can use =
-// @TODO support more characters in render_text and render ? for unsupported characters, also prevent drawing glyphs outside of the framebuffer
+// @TODO kerning
 
 #include <math.h>
 #include <stdio.h>
@@ -14,6 +14,7 @@
 #include <time.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #include <SDL2/SDL.h>
 
@@ -69,7 +70,12 @@ Mat4 g_viewport = {
 };
 
 enum {
-        GLYPH_0,
+        GLYPH_END  = -1,
+        GLYPH_LIFT = -2,
+
+        GLYPH_UNKNOWN = 128,
+
+        GLYPH_0 = 0,
         GLYPH_1,
         GLYPH_2,
         GLYPH_3,
@@ -80,89 +86,218 @@ enum {
         GLYPH_8,
         GLYPH_9,
 
-        GLYPH_A = 'a',
-        GLYPH_B = 'b',
-        GLYPH_C = 'c',
-        GLYPH_D = 'd',
-        GLYPH_E = 'e',
-        GLYPH_F = 'f',
-        GLYPH_G = 'g',
-        GLYPH_H = 'h',
-        GLYPH_I = 'i',
-        GLYPH_J = 'j',
-        GLYPH_K = 'k',
-        GLYPH_L = 'l',
-        GLYPH_M = 'm',
-        GLYPH_N = 'n',
-        GLYPH_O = 'o',
-        GLYPH_P = 'p',
-        GLYPH_Q = 'q',
-        GLYPH_R = 'r',
-        GLYPH_S = 's',
-        GLYPH_T = 't',
-        GLYPH_U = 'u',
-        GLYPH_V = 'v',
-        GLYPH_W = 'w',
-        GLYPH_X = 'x',
-        GLYPH_Y = 'y',
-        GLYPH_Z = 'z',
+        GLYPH_ZERO  = '0',
+        GLYPH_ONE   = '1',
+        GLYPH_TWO   = '2',
+        GLYPH_THREE = '3',
+        GLYPH_FOUR  = '4',
+        GLYPH_FIVE  = '5',
+        GLYPH_SIX   = '6',
+        GLYPH_SEVEN = '7',
+        GLYPH_EIGHT = '8',
+        GLYPH_NINE  = '9',
 
-        GLYPH_DOT        = '.',
-        GLYPH_SPACE      = ' ',
-        GLYPH_MINUS      = '-',
-        GLYPH_COMMA      = ',',
-        GLYPH_RBRACKET   = ')',
-        GLYPH_LBRACKET   = '(',
-        GLYPH_QUESTION   = '?',
-        GLYPH_UNDERSCORE = '_',
+        GLYPH_A = 'A',
+        GLYPH_B = 'B',
+        GLYPH_C = 'C',
+        GLYPH_D = 'D',
+        GLYPH_E = 'E',
+        GLYPH_F = 'F',
+        GLYPH_G = 'G',
+        GLYPH_H = 'H',
+        GLYPH_I = 'I',
+        GLYPH_J = 'J',
+        GLYPH_K = 'K',
+        GLYPH_L = 'L',
+        GLYPH_M = 'M',
+        GLYPH_N = 'N',
+        GLYPH_O = 'O',
+        GLYPH_P = 'P',
+        GLYPH_Q = 'Q',
+        GLYPH_R = 'R',
+        GLYPH_S = 'S',
+        GLYPH_T = 'T',
+        GLYPH_U = 'U',
+        GLYPH_V = 'V',
+        GLYPH_W = 'W',
+        GLYPH_X = 'X',
+        GLYPH_Y = 'Y',
+        GLYPH_Z = 'Z',
+
+        GLYPH_a = 'a',
+        GLYPH_b = 'b',
+        GLYPH_c = 'c',
+        GLYPH_d = 'd',
+        GLYPH_e = 'e',
+        GLYPH_f = 'f',
+        GLYPH_g = 'g',
+        GLYPH_h = 'h',
+        GLYPH_i = 'i',
+        GLYPH_j = 'j',
+        GLYPH_k = 'k',
+        GLYPH_l = 'l',
+        GLYPH_m = 'm',
+        GLYPH_n = 'n',
+        GLYPH_o = 'o',
+        GLYPH_p = 'p',
+        GLYPH_q = 'q',
+        GLYPH_r = 'r',
+        GLYPH_s = 's',
+        GLYPH_t = 't',
+        GLYPH_u = 'u',
+        GLYPH_v = 'v',
+        GLYPH_w = 'w',
+        GLYPH_x = 'x',
+        GLYPH_y = 'y',
+        GLYPH_z = 'z',
+
+        GLYPH_DOT         = '.',
+        GLYPH_SPACE       = ' ',
+        GLYPH_COMMA       = ',',
+        GLYPH_LBRACK      = '[',
+        GLYPH_RBRACK      = ']',
+        GLYPH_LPAREN      = '(',
+        GLYPH_RPAREN      = ')',
+        GLYPH_LBRACE      = '{',
+        GLYPH_RBRACE      = '}',
+        GLYPH_QUESTION    = '?',
+        GLYPH_UNDERSCORE  = '_',
+        GLYPH_EXCLAMATION = '!',
+        GLYPH_SQUOTE      = '\'',
+        GLYPH_DQUOTE      = '"',
+        GLYPH_DOLLAR      = '$',
+        GLYPH_PERCENT     = '%',
+        GLYPH_CARET       = '^',
+        GLYPH_AMPERSAND   = '&',
+        GLYPH_ASTERISK    = '*',
+        GLYPH_MINUS       = '-',
+        GLYPH_PLUS        = '+',
+        GLYPH_AT          = '@',
+        GLYPH_TILDE       = '~',
+        GLYPH_HASH        = '#',
+        GLYPH_EQUALS      = '=',
+        GLYPH_LT          = '<',
+        GLYPH_GT          = '>',
+        GLYPH_COLON       = ':',
+        GLYPH_SEMICOLON   = ';',
+        GLYPH_FSLASH      = '/',
+        GLYPH_BSLASH      = '\\',
+        GLYPH_PIPE        = '|',
+        GLYPH_BACKTICK    = '`',
 };
 
-int g_glyph_seqs[][10] = {
-        [GLYPH_0] = {9, 3, 5, 11, 9, 5,          -1},
-        [GLYPH_1] = {6, 4, 10, 9, 11,            -1},
-        [GLYPH_2] = {3, 5, 8, 6, 9, 11,          -1},
-        [GLYPH_3] = {3, 5, 8, 6, 8, 11, 9,       -1},
-        [GLYPH_4] = {11, 5, 6, 8,                -1},
-        [GLYPH_5] = {5, 3, 6, 8, 11, 9,          -1},
-        [GLYPH_6] = {5, 6, 8, 11, 9, 6,          -1},
-        [GLYPH_7] = {3, 5, 9,                    -1},
-        [GLYPH_8] = {8, 6, 3, 5, 11, 9, 6,       -1},
-        [GLYPH_9] = {5, 6, 3, 5, 8, 6, 8, 11, 9, -1},
+int16_t g_glyph_seqs[][16] = {
+        [GLYPH_UNKNOWN] = {0, 2, 11, 9, 0, 11, 9, 2, GLYPH_END},
 
-        [GLYPH_A] = {3, 5, 11, 9, 6, 8, -1},
-        [GLYPH_B] = {3, 9, 11, 8, 6,    -1},
-        [GLYPH_C] = {11, 9, 3, 5,       -1},
-        [GLYPH_D] = {5, 11, 9, 6, 8,    -1},
-        [GLYPH_E] = {11, 9, 3, 5, 6,    -1},
-        [GLYPH_F] = {5, 3, 6, 8, 6, 9,  -1},
-        [GLYPH_G] = {9, 11,5, 3, 6, 8,  -1},
-        [GLYPH_H] = {3, 9, 6, 8, 11,    -1},
-        [GLYPH_I] = {4, 10,             -1},
-        [GLYPH_J] = {4, 5, 11, 9,       -1},
-        [GLYPH_K] = {3, 9, 6, 11, 6, 5, -1},
-        [GLYPH_L] = {3, 9, 11,          -1},
-        [GLYPH_M] = {9, 3, 7, 5, 11,    -1},
-        [GLYPH_N] = {9, 3, 11, 5,       -1},
-        [GLYPH_O] = {9, 3, 5, 11, 9,    -1},
-        [GLYPH_P] = {9, 3, 5, 8, 6,     -1},
-        [GLYPH_Q] = {8, 10, 4, 3, 6, 7, -1},
-        [GLYPH_R] = {9, 6, 5,           -1},
-        [GLYPH_S] = {5, 3, 6, 8, 11, 9, -1},
-        [GLYPH_T] = {7, 6, 3, 9, 11,    -1},
-        [GLYPH_U] = {3, 9, 11, 5,       -1},
-        [GLYPH_V] = {3, 10, 5,          -1},
-        [GLYPH_W] = {3, 9, 7, 11, 5,    -1},
-        [GLYPH_X] = {9, 5, 7, 3, 11,    -1},
-        [GLYPH_Y] = {3, 7, 5, 7, 10,    -1},
-        [GLYPH_Z] = {3, 5, 9, 11,       -1},
+        [GLYPH_0] = {9, 3, 5, 11, 9, 5,          GLYPH_END},
+        [GLYPH_1] = {6, 4, 10, 9, 11,            GLYPH_END},
+        [GLYPH_2] = {3, 5, 8, 6, 9, 11,          GLYPH_END},
+        [GLYPH_3] = {3, 5, 8, 6, 8, 11, 9,       GLYPH_END},
+        [GLYPH_4] = {11, 5, 6, 8,                GLYPH_END},
+        [GLYPH_5] = {5, 3, 6, 8, 11, 9,          GLYPH_END},
+        [GLYPH_6] = {5, 6, 8, 11, 9, 6,          GLYPH_END},
+        [GLYPH_7] = {3, 5, 9,                    GLYPH_END},
+        [GLYPH_8] = {8, 6, 3, 5, 11, 9, 6,       GLYPH_END},
+        [GLYPH_9] = {5, 6, 3, 5, 8, 6, 8, 11, 9, GLYPH_END},
 
-        [GLYPH_SPACE]    = {0,           -1},
-        [GLYPH_MINUS]    = {6, 8,        -1},
-        [GLYPH_COMMA]    = {7, 9,        -1},
-        [GLYPH_QUESTION] = {0,           -1},
-        [GLYPH_LBRACKET] = {2, 3, 6, 11, -1},
-        [GLYPH_RBRACKET] = {0, 5, 8, 9,  -1},
-        [GLYPH_DOT]      = {9, 9,        -1},
+        [GLYPH_ZERO]  = {9, 3, 5, 11, 9, 5,          GLYPH_END},
+        [GLYPH_ONE]   = {6, 4, 10, 9, 11,            GLYPH_END},
+        [GLYPH_TWO]   = {3, 5, 8, 6, 9, 11,          GLYPH_END},
+        [GLYPH_THREE] = {3, 5, 8, 6, 8, 11, 9,       GLYPH_END},
+        [GLYPH_FOUR]  = {11, 5, 6, 8,                GLYPH_END},
+        [GLYPH_FIVE]  = {5, 3, 6, 8, 11, 9,          GLYPH_END},
+        [GLYPH_SIX]   = {5, 6, 8, 11, 9, 6,          GLYPH_END},
+        [GLYPH_SEVEN] = {3, 5, 9,                    GLYPH_END},
+        [GLYPH_EIGHT] = {8, 6, 3, 5, 11, 9, 6,       GLYPH_END},
+        [GLYPH_NINE]  = {5, 6, 3, 5, 8, 6, 8, 11, 9, GLYPH_END},
+
+        [GLYPH_A] = {6, 8, GLYPH_LIFT, 9, 3, 1, 5, 11,           GLYPH_END},
+        [GLYPH_B] = {3, 9, 10, 8, 4, 3, 0, 1, 5, 4,              GLYPH_END},
+        [GLYPH_C] = {11, 10, 6, 3, 1, 2,                         GLYPH_END},
+        [GLYPH_D] = {0, 1, 5, 8, 10, 9, 0,                       GLYPH_END},
+        [GLYPH_E] = {2, 0, 9, 11, GLYPH_LIFT, 3, 5,              GLYPH_END},
+        [GLYPH_F] = {2, 0, 3, 5, 3, 9,                           GLYPH_END},
+        [GLYPH_G] = {2, 0, 9, 11, 8, 7,                          GLYPH_END},
+        [GLYPH_H] = {0, 9, GLYPH_LIFT, 2, 11, GLYPH_LIFT, 3, 5,  GLYPH_END},
+        [GLYPH_I] = {0, 2, GLYPH_LIFT, 9, 11, GLYPH_LIFT, 1, 10, GLYPH_END},
+        [GLYPH_J] = {0, 2, GLYPH_LIFT, 1, 10, 9,                 GLYPH_END},
+        [GLYPH_K] = {0, 9, GLYPH_LIFT, 2, 3, 11,                 GLYPH_END},
+        [GLYPH_L] = {0, 9, 11,                                   GLYPH_END},
+        [GLYPH_M] = {9, 0, 7, 2, 11,                             GLYPH_END},
+        [GLYPH_N] = {9, 0, 11, 2,                                GLYPH_END},
+        [GLYPH_O] = {9, 0, 2, 11, 9,                             GLYPH_END},
+        [GLYPH_P] = {9, 0, 2, 8, 6,                              GLYPH_END},
+        [GLYPH_Q] = {3, 1, 5, 8, 10, 6, 3, GLYPH_LIFT, 7, 11,    GLYPH_END},
+        [GLYPH_R] = {9, 0, 1, 5, 7, 11, 7, 6,                    GLYPH_END},
+        [GLYPH_S] = {2, 3, 8, 9,                                 GLYPH_END},
+        [GLYPH_T] = {1, 10, GLYPH_LIFT, 0, 2,                    GLYPH_END},
+        [GLYPH_U] = {0, 9, 11, 2,                                GLYPH_END},
+        [GLYPH_V] = {0, 10, 2,                                   GLYPH_END},
+        [GLYPH_W] = {0, 9, 7, 11, 2,                             GLYPH_END},
+        [GLYPH_X] = {9, 2, 7, 0, 11,                             GLYPH_END},
+        [GLYPH_Y] = {0, 7, 2, 7, 10,                             GLYPH_END},
+        [GLYPH_Z] = {0, 2, 9, 11,                                GLYPH_END},
+
+        [GLYPH_a] = {3, 5, 11, 9, 6, 8,             GLYPH_END},
+        [GLYPH_b] = {3, 9, 11, 8, 6,                GLYPH_END},
+        [GLYPH_c] = {11, 9, 3, 5,                   GLYPH_END},
+        [GLYPH_d] = {5, 11, 9, 6, 8,                GLYPH_END},
+        [GLYPH_e] = {11, 9, 3, 5, 6,                GLYPH_END},
+        [GLYPH_f] = {5, 4, 10, 9, GLYPH_LIFT, 6, 8, GLYPH_END},
+        [GLYPH_g] = {9, 11,5, 3, 6, 8,              GLYPH_END},
+        [GLYPH_h] = {3, 9, 6, 8, 11,                GLYPH_END},
+        [GLYPH_i] = {4, 10,                         GLYPH_END},
+        [GLYPH_j] = {4, 10, 9,                      GLYPH_END},
+        [GLYPH_k] = {3, 9, 6, 11, 6, 5,             GLYPH_END},
+        [GLYPH_l] = {4, 10, 11,                     GLYPH_END},
+        [GLYPH_m] = {9, 3, 7, 5, 11,                GLYPH_END},
+        [GLYPH_n] = {9, 3, 11, 5,                   GLYPH_END},
+        [GLYPH_o] = {9, 3, 5, 11, 9,                GLYPH_END},
+        [GLYPH_p] = {9, 3, 5, 8, 6,                 GLYPH_END},
+        [GLYPH_q] = {8, 10, 4, 3, 6, 7,             GLYPH_END},
+        [GLYPH_r] = {9, 6, 5,                       GLYPH_END},
+        [GLYPH_s] = {5, 6, 8, 9,                    GLYPH_END},
+        [GLYPH_t] = {7, 6, 3, 9, 11,                GLYPH_END},
+        [GLYPH_u] = {3, 9, 11, 5,                   GLYPH_END},
+        [GLYPH_v] = {3, 10, 5,                      GLYPH_END},
+        [GLYPH_w] = {3, 9, 7, 11, 5,                GLYPH_END},
+        [GLYPH_x] = {9, 5, 7, 3, 11,                GLYPH_END},
+        [GLYPH_y] = {3, 7, 5, 7, 10,                GLYPH_END},
+        [GLYPH_z] = {3, 5, 9, 11,                   GLYPH_END},
+
+        [GLYPH_PERCENT]     = {0, 1, 4, 3, 0, GLYPH_LIFT, 9, 2, GLYPH_LIFT, 11, 10, 7, 8, 11, GLYPH_END},
+        [GLYPH_ASTERISK]    = {3, 11, GLYPH_LIFT, 9, 5, GLYPH_LIFT, 6, 8, GLYPH_LIFT, 4, 10,  GLYPH_END},
+        [GLYPH_HASH]        = {3, 5, GLYPH_LIFT, 6, 8, GLYPH_LIFT, 9, 1, GLYPH_LIFT, 10, 2,   GLYPH_END},
+        [GLYPH_QUESTION]    = {10, 10, GLYPH_LIFT, 7, 4, 5, 2, 0,                             GLYPH_END},
+        [GLYPH_DOLLAR]      = {9, 8, 3, 2, GLYPH_LIFT, 1, 10,                                 GLYPH_END},
+        [GLYPH_EXCLAMATION] = {10, 10, GLYPH_LIFT, 7, 1,                                      GLYPH_END},
+        [GLYPH_COLON]       = {4, 4, GLYPH_LIFT, 10, 10,                                      GLYPH_END},
+        [GLYPH_PLUS]        = {6, 8, GLYPH_LIFT, 4, 10,                                       GLYPH_END},
+        [GLYPH_AT]          = {11, 9, 0, 2, 8, 7, 4, 5,                                       GLYPH_END},
+        [GLYPH_DQUOTE]      = {0, 3, GLYPH_LIFT, 1, 4,                                        GLYPH_END},
+        [GLYPH_EQUALS]      = {3, 5, GLYPH_LIFT, 6, 8,                                        GLYPH_END},
+        [GLYPH_SEMICOLON]   = {4, 4, GLYPH_LIFT, 7, 9,                                        GLYPH_END},
+        [GLYPH_AMPERSAND]   = {11, 3, 1, 5, 6, 9, 8,                                          GLYPH_END},
+        [GLYPH_RBRACK]      = {1, 2, 11, 10,                                                  GLYPH_END},
+        [GLYPH_LPAREN]      = {2, 4, 7, 11,                                                   GLYPH_END},
+        [GLYPH_LBRACE]      = {2, 4, 7, 11,                                                   GLYPH_END},
+        [GLYPH_LBRACK]      = {1, 0, 9, 10,                                                   GLYPH_END},
+        [GLYPH_RPAREN]      = {0, 4, 7, 9,                                                    GLYPH_END},
+        [GLYPH_TILDE]       = {6, 4, 8, 5,                                                    GLYPH_END},
+        [GLYPH_RBRACE]      = {0, 4, 7, 9,                                                    GLYPH_END},
+        [GLYPH_LT]          = {5, 6, 11,                                                      GLYPH_END},
+        [GLYPH_GT]          = {3, 8, 9,                                                       GLYPH_END},
+        [GLYPH_CARET]       = {3, 1, 5,                                                       GLYPH_END},
+        [GLYPH_UNDERSCORE]  = {9, 11,                                                         GLYPH_END},
+        [GLYPH_BSLASH]      = {0, 10,                                                         GLYPH_END},
+        [GLYPH_PIPE]        = {1, 10,                                                         GLYPH_END},
+        [GLYPH_MINUS]       = {6, 8,                                                          GLYPH_END},
+        [GLYPH_COMMA]       = {7, 9,                                                          GLYPH_END},
+        [GLYPH_SQUOTE]      = {1, 4,                                                          GLYPH_END},
+        [GLYPH_DOT]         = {9, 9,                                                          GLYPH_END},
+        [GLYPH_FSLASH]      = {9, 1,                                                          GLYPH_END},
+        [GLYPH_BACKTICK]    = {0, 4,                                                          GLYPH_END},
+        [GLYPH_SPACE]       = {0,                                                             GLYPH_END},
 };
 
 //
@@ -235,9 +370,16 @@ void line(Vec3 a, Vec3 b, int colour) {
 }
 
 //
+// is_valid_glyph - checks whether a glyph is valid
+//
+static inline int is_valid_glyph(uint8_t glyph_id) {
+        return glyph_id <= 9 ||glyph_id == GLYPH_SPACE || isprint(glyph_id);
+}
+
+//
 // render_glyph - renders a glyph to the framebuffer
 //
-Vec3 render_glyph(char glyph_id, Vec3 pos, double unit) {
+Vec3 render_glyph(Vec3 pos, double unit, uint8_t glyph_id) {
         Vec3 points[] = {
                 pos,
                 VEC3(pos.x + unit, pos.y, 0),
@@ -260,10 +402,21 @@ Vec3 render_glyph(char glyph_id, Vec3 pos, double unit) {
                 points[i] = m4v3_mul(g_viewport, points[i]);
         }
 
+        if (!is_valid_glyph(glyph_id)) {
+                // @NOTE maybe this is better as implicit behaviour by
+                // putting the unknown glyph at every other index in g_glyph_seqs
+                glyph_id = GLYPH_UNKNOWN;
+        }
+
         Vec3 line_start = points[g_glyph_seqs[glyph_id][0]];
-        for (int i = 1; g_glyph_seqs[glyph_id][i] != -1; ++i) {
-                line(line_start, points[g_glyph_seqs[glyph_id][i]], 0x00FF00);
-                line_start = points[g_glyph_seqs[glyph_id][i]];
+        for (int i = 1; g_glyph_seqs[glyph_id][i] != GLYPH_END; ++i) {
+                int point_index = g_glyph_seqs[glyph_id][i];
+                if (point_index == GLYPH_LIFT) {
+                        line_start = points[g_glyph_seqs[glyph_id][i++ + 1]];
+                        continue;
+                }
+                line(line_start, points[point_index], 0x00FF00);
+                line_start = points[point_index];
         }
 
         pos.x += ((glyph_id == GLYPH_DOT) ? 1 : 3) * unit;
@@ -274,8 +427,12 @@ Vec3 render_glyph(char glyph_id, Vec3 pos, double unit) {
 // render_text_int - called by render_text to render integers as text to the framebuffer
 //
 Vec3 render_text_int(Vec3 pos, double unit, int d) {
+        if (d == 0) {
+                return render_glyph(pos, unit, GLYPH_0);
+        }
+
         if (d < 0) {
-                pos = render_glyph(GLYPH_MINUS, pos, unit);
+                pos = render_glyph(pos, unit, GLYPH_MINUS);
                 d = -d;
         }
 
@@ -289,7 +446,7 @@ Vec3 render_text_int(Vec3 pos, double unit, int d) {
         }
 
         while (place_val >= 1) {
-                pos = render_glyph((d / place_val) % 10, pos, unit);
+                pos = render_glyph(pos, unit, (d / place_val) % 10);
                 place_val /= 10;
         }
 
@@ -301,14 +458,14 @@ Vec3 render_text_int(Vec3 pos, double unit, int d) {
 //
 Vec3 render_text_double(Vec3 pos, double unit, double f) {
         if (f < 0) {
-                pos = render_glyph(GLYPH_MINUS, pos, unit);
+                pos = render_glyph(pos, unit, GLYPH_MINUS);
                 f = -f;
         }
 
         long whole = (long)f;
 
         if (whole == 0) {
-                pos = render_glyph(GLYPH_0, pos, unit);
+                pos = render_glyph(pos, unit, GLYPH_0);
         }
 
         int place_val = 1;
@@ -321,16 +478,16 @@ Vec3 render_text_double(Vec3 pos, double unit, double f) {
         }
 
         while (place_val >= 1) {
-                pos = render_glyph((whole / place_val) % 10, pos, unit);
+                pos = render_glyph(pos, unit, (whole / place_val) % 10);
                 place_val /= 10;
         }
 
-        pos = render_glyph(GLYPH_DOT, pos, unit);
+        pos = render_glyph(pos, unit, GLYPH_DOT);
 
         int max_digits = 2;
         do {
                 f *= 10;
-                pos = render_glyph((long)f % 10, pos, unit);
+                pos = render_glyph(pos, unit, (long)f % 10);
         } while (f > (long)f && max_digits-- > 1);
 
         return pos;
@@ -339,14 +496,15 @@ Vec3 render_text_double(Vec3 pos, double unit, double f) {
 //
 // render_text_vector - called by render_text to render a vector as text to the framebuffer
 //
-Vec3 render_text_vector(Vec3 pos, double unit, Vec3 v) {
-        pos = render_glyph(GLYPH_LBRACKET, pos, unit);
-        pos = render_text_double(pos, unit, v.x);
-        pos = render_glyph(GLYPH_COMMA, pos, unit);
-        pos = render_text_double(pos, unit, v.y);
-        pos = render_glyph(GLYPH_COMMA, pos, unit);
-        pos = render_text_double(pos, unit, v.z);
-        pos = render_glyph(GLYPH_RBRACKET, pos, unit);
+Vec3 render_text_vector(Vec3 pos, double unit, const Vec3 *v) {
+        pos = render_glyph(pos, unit, GLYPH_LPAREN);
+        pos = render_text_double(pos, unit, v->x);
+        pos = render_glyph(pos, unit, GLYPH_COMMA);
+        pos = render_text_double(pos, unit, v->y);
+        pos = render_glyph(pos, unit, GLYPH_COMMA);
+        pos = render_text_double(pos, unit, v->z);
+        pos = render_glyph(pos, unit, GLYPH_RPAREN);
+        return pos;
 }
 
 //
@@ -356,9 +514,17 @@ Vec3 render_text(Vec3 pos, double unit, const char *fmt, ...) {
         va_list arglist;
         va_start(arglist, fmt);
 
+        if (pos.y >= 1.0 || pos.x <= -1.0)  {
+                goto _exit;
+        }
+
         Vec3 curs = pos;
         for (int i = 0; fmt[i] != '\0'; ++i) {
-                if (fmt[i] == '\n') {
+                if (curs.y - 4*unit <= -1.0) {
+                        goto _exit;
+                }
+
+                if (fmt[i] == '\n' || curs.x + 3*unit >= 1.0) {
                         curs.x = pos.x;
                         curs.y -= 4*unit;
                 } else if (fmt[i] == '%') {
@@ -368,17 +534,21 @@ Vec3 render_text(Vec3 pos, double unit, const char *fmt, ...) {
                         } else if (fmt[i] == 'f') {
                                 curs = render_text_double(curs, unit, va_arg(arglist, double));
                         } else if (fmt[i] == 'v') {
-                                curs = render_text_vector(curs, unit, va_arg(arglist, Vec3));
+                                curs = render_text_vector(curs, unit, va_arg(arglist, Vec3*));
                         } else if (fmt[i] == 's') {
                                 curs = render_text(curs, unit, va_arg(arglist, char*));
+                        } else if (fmt[i] == 'c') {
+                                curs = render_glyph(curs, unit, va_arg(arglist, int));
+                        } else if (fmt[i] == '%') {
+                                curs = render_glyph(curs, unit, GLYPH_PERCENT);
                         }
                 } else {
-                        curs = render_glyph(fmt[i], curs, unit);
+                        curs = render_glyph(curs, unit, fmt[i]);
                 }
         }
 
+_exit:
         va_end(arglist);
-
         return curs;
 }
 
@@ -705,22 +875,6 @@ void render_axes(Camera *cam) {
         line(o, z, 0x0000ff);
 }
 
-#if 0
-        SDL_Window *smap_window = SDL_CreateWindow("sren_smap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
-        if (smap_window == NULL) {
-                fprintf(stderr, "SDL_CreateWindow failure: %s\n", SDL_GetError());
-                SDL_Quit();
-                return -1;
-        }
-
-        SDL_Surface *smap_screen = SDL_GetWindowSurface(smap_window);
-        if (smap_screen == NULL) {
-                fprintf(stderr, "SDL_GetWindowSurface failure: %s\n", SDL_GetError());
-                SDL_Quit();
-                return -1;
-        }
-#endif
-
 int main(int argc, char **argv) {
         if (argc < 3) {
                 fprintf(stderr, "usage: %s <obj> <texture>\n", argv[0]);
@@ -777,8 +931,6 @@ int main(int argc, char **argv) {
         int frames_drawn = 0;
         double fps = 0;
         double elapsed_ms = 0;
-        int dig_counter = 0;
-        int letter_counter = 0;
 
         double i = 0.0;
         for (;;) {
@@ -837,14 +989,10 @@ int main(int argc, char **argv) {
                 render_model_smap(floor_model, &g_light);
                 render_model_smap(main_model, &g_light);
 
-#if 0
-                draw_smap(g_light.shadow_map, smap_screen->pixels);
-#endif
-
                 render_model(floor_model, &cam);
                 render_model(main_model, &cam);
 
-                if (frames_drawn % 64 == 0) {
+                if ((frames_drawn & 63) == 0) {
                         elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
                         fps = 1000 / elapsed_ms;
                 }
@@ -857,14 +1005,28 @@ int main(int argc, char **argv) {
                         point(g_light.pos.x, g_light.pos.y, RGBf(1.0, 1.0, 1.0));
                 }
 
-                render_text(VEC3(-0.95, 0.95, 0), 0.012, "-sren-\n%f fps\n%fms frame time\ncamera at %v", fps, elapsed_ms, cam.pos);
+                time_t rawtime;
+                time(&rawtime);
+                struct tm *timeinfo = localtime(&rawtime);
+
+                render_text(
+                        VEC3(-0.95, 0.95, 0), 0.012,
+                        "-sren-\n\n"
+                        "%s\n"
+                        "%f fps\n"
+                        "%fms frame time\n"
+                        "%d frames drawn\n"
+                        "main model: \"%s\"\n"
+                        "texture:    \"%s\"\n"
+                        "camera.pos = %v\n"
+                        "g_light.pos = %v\n",
+
+                        asctime(timeinfo), fps, elapsed_ms, frames_drawn, argv[1], argv[2], &cam.pos, &g_light.pos
+                );
 
                 SDL_UpdateWindowSurface(g_window);
-#if 0
-                SDL_UpdateWindowSurface(smap_window);
-#endif
 
-                memset(g_framebuffer, 0, g_window_width*g_window_height*sizeof(uint32_t));
+                memset(g_framebuffer, 0x21, g_window_width*g_window_height*sizeof(uint32_t));
                 i += 0.01;
 
                 ++frames_drawn;
