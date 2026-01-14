@@ -4,7 +4,9 @@
         #include "arena.h"
 
         #include <stdint.h>
+        #include <string.h>
         #include <stddef.h>
+        #include <math.h>
 
         #define VEC3(x, y, z) ((Vec3){(x), (y), (z)})
         #define VEC4(x, y, z) ((Vec4){(x), (y), (z), (w)})

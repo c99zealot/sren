@@ -1,10 +1,12 @@
 // @TODO start using a Scene object to organise everything instead of just rendering it separately
-// @TODO make all the texture-y things Textures; depth buffer, shadow maps, etc. and write general sampling functions for 0,0 @ bottom left / 0,0 @ center
-// @TODO handle asset loading failures with default assets
 // @TODO phong lighting w/ normal maps
 // @TODO serious OBJ parser
 // @TODO make matrices structs so we can use =
 // @TODO kerning
+// @TODO bounds check per-glyph
+// @TODO view frustum, proper perspective transform
+// @TODO logging
+// @TODO dev console
 
 #include <math.h>
 #include <stdio.h>
@@ -15,6 +17,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <float.h>
 
 #include <SDL2/SDL.h>
 
@@ -48,12 +51,6 @@ SDL_Window  *g_window;
 SDL_Surface *g_screen;
 uint32_t *g_framebuffer;
 double *g_depth_buffer;
-
-Light g_light = {
-        .colour = VEC3(1.0, 1.0, 1.0),
-        .subject = VEC3(0, 0, 0),
-        .intensity = 1.0
-};
 
 const int g_window_width = 1000;
 const int g_window_height = 1000;
@@ -303,8 +300,8 @@ int16_t g_glyph_seqs[][16] = {
 //
 // point - draws a point at (x, y) in the frame buffer
 //
-static inline void point(int x, int y, int colour) {
-        g_framebuffer[SCREEN(x, y)] = colour;
+static inline void point(int x, int y, Vec3 colour) {
+        g_framebuffer[SCREEN(x, y)] = RGBf(colour.x, colour.y, colour.z);
 }
 
 //
@@ -340,7 +337,7 @@ static inline double smap_read(Shadow_Map *shadow_map, int x, int y) {
 //
 // line - draws a line in the frame buffer from (ax, ay) to (bx, by)
 //
-void line(Vec3 a, Vec3 b, int colour) {
+void line(Vec3 a, Vec3 b, Vec3 colour) {
         if (a.x == b.x && a.y == b.y) {
                 point(a.x, a.y, colour);
                 return;
@@ -373,13 +370,13 @@ void line(Vec3 a, Vec3 b, int colour) {
 // is_valid_glyph - checks whether a glyph is valid
 //
 static inline int is_valid_glyph(uint8_t glyph_id) {
-        return glyph_id <= 9 ||glyph_id == GLYPH_SPACE || isprint(glyph_id);
+        return glyph_id <= 9 || glyph_id == GLYPH_SPACE || isprint(glyph_id);
 }
 
 //
 // render_glyph - renders a glyph to the framebuffer
 //
-Vec3 render_glyph(Vec3 pos, double unit, uint8_t glyph_id) {
+Vec3 render_glyph(Vec3 pos, double unit, Vec3 colour, uint8_t glyph_id) {
         Vec3 points[] = {
                 pos,
                 VEC3(pos.x + unit, pos.y, 0),
@@ -403,8 +400,6 @@ Vec3 render_glyph(Vec3 pos, double unit, uint8_t glyph_id) {
         }
 
         if (!is_valid_glyph(glyph_id)) {
-                // @NOTE maybe this is better as implicit behaviour by
-                // putting the unknown glyph at every other index in g_glyph_seqs
                 glyph_id = GLYPH_UNKNOWN;
         }
 
@@ -415,7 +410,7 @@ Vec3 render_glyph(Vec3 pos, double unit, uint8_t glyph_id) {
                         line_start = points[g_glyph_seqs[glyph_id][i++ + 1]];
                         continue;
                 }
-                line(line_start, points[point_index], 0x00FF00);
+                line(line_start, points[point_index], colour);
                 line_start = points[point_index];
         }
 
@@ -426,13 +421,13 @@ Vec3 render_glyph(Vec3 pos, double unit, uint8_t glyph_id) {
 //
 // render_text_int - called by render_text to render integers as text to the framebuffer
 //
-Vec3 render_text_int(Vec3 pos, double unit, int d) {
+Vec3 render_text_int(Vec3 pos, double unit, Vec3 colour, int d) {
         if (d == 0) {
-                return render_glyph(pos, unit, GLYPH_0);
+                return render_glyph(pos, unit, colour, GLYPH_0);
         }
 
         if (d < 0) {
-                pos = render_glyph(pos, unit, GLYPH_MINUS);
+                pos = render_glyph(pos, unit, colour, GLYPH_MINUS);
                 d = -d;
         }
 
@@ -446,7 +441,7 @@ Vec3 render_text_int(Vec3 pos, double unit, int d) {
         }
 
         while (place_val >= 1) {
-                pos = render_glyph(pos, unit, (d / place_val) % 10);
+                pos = render_glyph(pos, unit, colour, (d / place_val) % 10);
                 place_val /= 10;
         }
 
@@ -456,16 +451,16 @@ Vec3 render_text_int(Vec3 pos, double unit, int d) {
 //
 // render_text_double - called by render_text to render doubles as text to the framebufer
 //
-Vec3 render_text_double(Vec3 pos, double unit, double f) {
+Vec3 render_text_double(Vec3 pos, double unit, Vec3 colour, double f) {
         if (f < 0) {
-                pos = render_glyph(pos, unit, GLYPH_MINUS);
+                pos = render_glyph(pos, unit, colour, GLYPH_MINUS);
                 f = -f;
         }
 
         long whole = (long)f;
 
         if (whole == 0) {
-                pos = render_glyph(pos, unit, GLYPH_0);
+                pos = render_glyph(pos, unit, colour, GLYPH_0);
         }
 
         int place_val = 1;
@@ -478,16 +473,16 @@ Vec3 render_text_double(Vec3 pos, double unit, double f) {
         }
 
         while (place_val >= 1) {
-                pos = render_glyph(pos, unit, (whole / place_val) % 10);
+                pos = render_glyph(pos, unit, colour, (whole / place_val) % 10);
                 place_val /= 10;
         }
 
-        pos = render_glyph(pos, unit, GLYPH_DOT);
+        pos = render_glyph(pos, unit, colour, GLYPH_DOT);
 
         int max_digits = 2;
         do {
                 f *= 10;
-                pos = render_glyph(pos, unit, (long)f % 10);
+                pos = render_glyph(pos, unit, colour, (long)f % 10);
         } while (f > (long)f && max_digits-- > 1);
 
         return pos;
@@ -496,21 +491,21 @@ Vec3 render_text_double(Vec3 pos, double unit, double f) {
 //
 // render_text_vector - called by render_text to render a vector as text to the framebuffer
 //
-Vec3 render_text_vector(Vec3 pos, double unit, const Vec3 *v) {
-        pos = render_glyph(pos, unit, GLYPH_LPAREN);
-        pos = render_text_double(pos, unit, v->x);
-        pos = render_glyph(pos, unit, GLYPH_COMMA);
-        pos = render_text_double(pos, unit, v->y);
-        pos = render_glyph(pos, unit, GLYPH_COMMA);
-        pos = render_text_double(pos, unit, v->z);
-        pos = render_glyph(pos, unit, GLYPH_RPAREN);
+Vec3 render_text_vector(Vec3 pos, double unit, Vec3 colour, const Vec3 *v) {
+        pos = render_glyph(pos, unit, colour, GLYPH_LPAREN);
+        pos = render_text_double(pos, unit, colour, v->x);
+        pos = render_glyph(pos, unit, colour, GLYPH_COMMA);
+        pos = render_text_double(pos, unit, colour, v->y);
+        pos = render_glyph(pos, unit, colour, GLYPH_COMMA);
+        pos = render_text_double(pos, unit, colour, v->z);
+        pos = render_glyph(pos, unit, colour, GLYPH_RPAREN);
         return pos;
 }
 
 //
 // render_text - renders formatted text to the framebuffer
 //
-Vec3 render_text(Vec3 pos, double unit, const char *fmt, ...) {
+Vec3 render_text(Vec3 pos, double unit, Vec3 colour, const char *fmt, ...) {
         va_list arglist;
         va_start(arglist, fmt);
 
@@ -530,20 +525,20 @@ Vec3 render_text(Vec3 pos, double unit, const char *fmt, ...) {
                 } else if (fmt[i] == '%') {
                         ++i;
                         if (fmt[i] == 'd') {
-                                curs = render_text_int(curs, unit, va_arg(arglist, int));
+                                curs = render_text_int(curs, unit, colour, va_arg(arglist, int));
                         } else if (fmt[i] == 'f') {
-                                curs = render_text_double(curs, unit, va_arg(arglist, double));
+                                curs = render_text_double(curs, unit, colour, va_arg(arglist, double));
                         } else if (fmt[i] == 'v') {
-                                curs = render_text_vector(curs, unit, va_arg(arglist, Vec3*));
+                                curs = render_text_vector(curs, unit, colour, va_arg(arglist, Vec3*));
                         } else if (fmt[i] == 's') {
-                                curs = render_text(curs, unit, va_arg(arglist, char*));
+                                curs = render_text(curs, unit, colour, va_arg(arglist, char*));
                         } else if (fmt[i] == 'c') {
-                                curs = render_glyph(curs, unit, va_arg(arglist, int));
+                                curs = render_glyph(curs, unit, colour, va_arg(arglist, int));
                         } else if (fmt[i] == '%') {
-                                curs = render_glyph(curs, unit, GLYPH_PERCENT);
+                                curs = render_glyph(curs, unit, colour, GLYPH_PERCENT);
                         }
                 } else {
-                        curs = render_glyph(curs, unit, fmt[i]);
+                        curs = render_glyph(curs, unit, colour, fmt[i]);
                 }
         }
 
@@ -582,9 +577,9 @@ void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 b = v[f->v1[VERTEX]];
         Vec3 c = v[f->v2[VERTEX]];
 
-        Vec3 a_lightview = m4v3_mul(g_light.view_mat, a);
-        Vec3 b_lightview = m4v3_mul(g_light.view_mat, b);
-        Vec3 c_lightview = m4v3_mul(g_light.view_mat, c);
+        Vec3 a_lightview = m4v3_mul(light->view_mat, a);
+        Vec3 b_lightview = m4v3_mul(light->view_mat, b);
+        Vec3 c_lightview = m4v3_mul(light->view_mat, c);
 
         a = m4v3_mul(cam->view_mat, a);
         b = m4v3_mul(cam->view_mat, b);
@@ -615,7 +610,7 @@ void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 nb = m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]);
         Vec3 nc = m4v3_mul(cam->inv_tr, vn[f->v2[NORM]]);
 
-        Vec3 light_in_view = m4v3_mul(cam->view_mat, g_light.pos);
+        Vec3 light_in_view = m4v3_mul(cam->view_mat, light->pos);
 
         Vec3 a_to_light = vec3_sub(light_in_view, a);
         Vec3 b_to_light = vec3_sub(light_in_view, b);
@@ -625,9 +620,9 @@ void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 b_light_proj = vec3_scale(b_lightview, b_recip_z);
         Vec3 c_light_proj = vec3_scale(c_lightview, c_recip_z);
 
-        double light_a = attenuate(vec3_dot(na, unit(a_to_light)), vec3_norm(a_to_light));
-        double light_b = attenuate(vec3_dot(nb, unit(b_to_light)), vec3_norm(b_to_light));
-        double light_c = attenuate(vec3_dot(nc, unit(c_to_light)), vec3_norm(c_to_light));
+        double light_a = light->intensity * attenuate(vec3_dot(na, unit(a_to_light)), vec3_norm(a_to_light));
+        double light_b = light->intensity * attenuate(vec3_dot(nb, unit(b_to_light)), vec3_norm(b_to_light));
+        double light_c = light->intensity * attenuate(vec3_dot(nc, unit(c_to_light)), vec3_norm(c_to_light));
 
         a = m4v3_mul(g_viewport, a);
         b = m4v3_mul(g_viewport, b);
@@ -686,16 +681,18 @@ void render_face(Face *f, Model *model, Camera *cam, Light *light) {
                                 interp_light_proj = vec3_scale(interp_light_proj, 1.0/interp_recip_z);
                                 interp_light_proj = m4v3_mul(g_viewport, persp(interp_light_proj));
 
-                                double light_pixel = 0.1;
+                                double intensity = 0.1;
                                 if (smap_read(light->shadow_map, interp_light_proj.x, interp_light_proj.y) <= interp_light_proj.z + 0.05) {
-                                        light_pixel = INTERP(light_a, light_b, light_c);
+                                        intensity = INTERP(light_a, light_b, light_c);
                                 }
 
                                 Vec3 colour = sample_texture(model->texture, uv.x, uv.y);
-                                colour = vec3_scale(colour, light_pixel);
-                                uint32_t lit_colour = RGBf(colour.x, colour.y, colour.z);
+                                colour.x *= light->colour.x;
+                                colour.y *= light->colour.y;
+                                colour.z *= light->colour.z;
+                                colour = vec3_scale(colour, intensity);
 
-                                point(x, y, lit_colour);
+                                point(x, y, colour);
                                 dbuf_write(x, y, depth);
                         }
 
@@ -791,12 +788,12 @@ void render_face_smap(Face *f, Model *model, Light *light) {
 //
 // render_model - renders all the faces in a model
 //
-void render_model(Model *model, Camera *cam) {
+void render_model(Model *model, Camera *cam, Light *light) {
         Obj *obj = model->obj;
         Face *f = obj->faces;
 
         for (int i = 0; i < obj->face_count; ++i) {
-                render_face(&f[i], model, cam, &g_light);
+                render_face(&f[i], model, cam, light);
         }
 }
 
@@ -870,9 +867,9 @@ void render_axes(Camera *cam) {
                 return;
         }
 
-        line(o, x, 0xff0000);
-        line(o, y, 0x00ff00);
-        line(o, z, 0x0000ff);
+        line(o, x, VEC3(1, 0, 0));
+        line(o, y, VEC3(0, 1, 0));
+        line(o, z, VEC3(0, 0, 1));
 }
 
 int main(int argc, char **argv) {
@@ -898,7 +895,7 @@ int main(int argc, char **argv) {
         g_depth_buffer = arena_alloc(&render_arena, g_window_width*g_window_height);
 
         Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, 1024, 1024, 0, 0);
-        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor_texture.data", NULL, 1024, 1024, 0, 0);
+        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor_texture.tex", NULL, 1024, 1024, 0, 0);
         //Scene *scene = mkscene(&render_arena);
 
         g_screen = SDL_GetWindowSurface(g_window);
@@ -908,8 +905,14 @@ int main(int argc, char **argv) {
                 return -1;
         }
         g_framebuffer = g_screen->pixels;
-
-        g_light.shadow_map = mk_smap(&render_arena, g_window_width, g_window_height);
+        
+        Light light = {
+                .colour = VEC3(1.0, 1.0, 1.0),
+                .subject = VEC3(0, 0, 0),
+                .intensity = 1.0,
+                .up = VEC3(0, 1, 0),
+                .shadow_map = mk_smap(&render_arena, g_window_width, g_window_height),
+        };
 
         Camera cam = {
                 .pos = VEC3(0, 0, 2),
@@ -921,7 +924,7 @@ int main(int argc, char **argv) {
         SDL_WarpMouseInWindow(g_window, g_window_width/2, g_window_height/2);
         SDL_SetRelativeMouseMode(SDL_TRUE);
 
-        const double mouse_sens = 0.01;
+        const double mouse_sens = 0.02;
 
         double curs_dx = 0;
         double curs_dy = 0;
@@ -930,7 +933,11 @@ int main(int argc, char **argv) {
 
         int frames_drawn = 0;
         double fps = 0;
-        double elapsed_ms = 0;
+        double fps_high = 0;
+        double fps_low = DBL_MAX;
+        double frame_time = 0;
+        double frame_time_high = 0;
+        double frame_time_low = DBL_MAX;
 
         double i = 0.0;
         for (;;) {
@@ -963,11 +970,9 @@ int main(int argc, char **argv) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                 }
 
-                g_light.pos = VEC3(1.5*sin(i), 1, 1.5*cos(i));
-                g_light.subject = VEC3(0, 0, 0);
-                g_light.up = VEC3(0, 1, 0);
-                set_light_view(&g_light);
-                reset_smap(&g_light);
+                light.pos = VEC3(1.5*sin(i), 1, 1.5*cos(i));
+                //light.colour = VEC3(fabs(sin(i)), fabs(cos(i)), fabs(sin(i)));
+                set_light_view(&light);
 
                 double cx = cos(-curs_dx);
                 double cy = cos(-curs_dy);
@@ -986,48 +991,65 @@ int main(int argc, char **argv) {
 
                 clock_t start = clock();
 
-                render_model_smap(floor_model, &g_light);
-                render_model_smap(main_model, &g_light);
+                if (frames_drawn % 2) {
+                        reset_smap(&light);
+                        render_model_smap(floor_model, &light);
+                        render_model_smap(main_model, &light);
+                }
 
-                render_model(floor_model, &cam);
-                render_model(main_model, &cam);
+                render_model(floor_model, &cam, &light);
+                render_model(main_model, &cam, &light);
 
-                if ((frames_drawn & 63) == 0) {
-                        elapsed_ms = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
-                        fps = 1000 / elapsed_ms;
+                if ((frames_drawn % 64) == 0) {
+                        frame_time = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
+                        fps = 1000 / frame_time;
+                        fps_high = fps > fps_high ? fps : fps_high;
+                        fps_low = fps < fps_low ? fps : fps_low;
+                        frame_time_high = frame_time > frame_time_high ? frame_time : frame_time_high;
+                        frame_time_low = frame_time < frame_time_low ? frame_time : frame_time_low;
                 }
 
                 render_axes(&cam);
-
-                g_light.pos = m4v3_mul(g_viewport, persp(m4v3_mul(cam.view_mat, g_light.pos)));
-
-                if (!out_of_view(g_light.pos) && dbuf_read(g_light.pos.x, g_light.pos.y) < g_light.pos.z) {
-                        point(g_light.pos.x, g_light.pos.y, RGBf(1.0, 1.0, 1.0));
-                }
 
                 time_t rawtime;
                 time(&rawtime);
                 struct tm *timeinfo = localtime(&rawtime);
 
                 render_text(
-                        VEC3(-0.95, 0.95, 0), 0.012,
-                        "-sren-\n\n"
-                        "%s\n"
-                        "%f fps\n"
-                        "%fms frame time\n"
-                        "%d frames drawn\n"
-                        "main model: \"%s\"\n"
-                        "texture:    \"%s\"\n"
-                        "camera.pos = %v\n"
-                        "g_light.pos = %v\n",
+                        VEC3(-0.95, 0.95, 0), 0.012, VEC3(0, 1, 0),
 
-                        asctime(timeinfo), fps, elapsed_ms, frames_drawn, argv[1], argv[2], &cam.pos, &g_light.pos
+                        "-SRen-\n\n"
+
+                        "%s\n"
+                        "%dx%d @ %f fps [%f/%f]\n"
+                        "%fms frame time [%f/%f]\n"
+                        "%d frames drawn\n"
+                        "main model: \"%s\" (%d faces)\n"
+                        "texture: \"%s\" (%dx%d)\n"
+                        "camera @ %v\n",
+
+                        asctime(timeinfo),
+                        g_window_width, g_window_height,
+                        fps, fps_high, fps_low,
+                        frame_time, frame_time_high, frame_time_low,
+                        frames_drawn,
+                        argv[1], main_model->obj->face_count,
+                        argv[2], main_model->texture->width, main_model->texture->height,
+                        &cam.pos
                 );
+
+                Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
+                Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
+
+                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) < light_pos_screen.z) {
+                        point(light_pos_screen.x, light_pos_screen.y, light.colour);
+                        render_text(light_pos_proj, 0.008, light.colour, "light %v", &light.pos);
+                }
 
                 SDL_UpdateWindowSurface(g_window);
 
                 memset(g_framebuffer, 0x21, g_window_width*g_window_height*sizeof(uint32_t));
-                i += 0.01;
+                i += 0.005;
 
                 ++frames_drawn;
         }

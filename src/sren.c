@@ -1,9 +1,10 @@
-#include <stdio.h>
-#include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "sren.h"
 #include "arena.h"
+
+#include "missing_assets.h"
 
 static double parse_double(char **src) {
         char *p = *src;
@@ -62,7 +63,7 @@ Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h) {
 
         FILE *tex_file = fopen(filename, "rb");
         if (!tex_file) {
-                return NULL;
+                return &g_missing_tex;
         }
 
         fseek(tex_file, 0, SEEK_END);
@@ -88,7 +89,7 @@ Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h) {
 Obj *load_obj(Arena *arena, char *filename) {
         FILE *obj_file = fopen(filename, "rb");
         if (!obj_file) {
-                return NULL;
+                return &g_missing_obj;
         }
 
         fseek(obj_file, 0, SEEK_END);
@@ -226,17 +227,9 @@ Model *load_model(
 ) {
         Model *model = arena_alloc(arena, sizeof(Model));
 
-        if (obj_filename != NULL) {
-                model->obj = load_obj(arena, obj_filename);
-        }
-
-        if (tm_filename != NULL) {
-                model->texture = load_texture(arena, tm_filename, tm_w, tm_h);
-        }
-
-        if (nm_filename != NULL) {
-                model->norm_map = load_texture(arena, nm_filename, nm_w, nm_h);
-        }
+        model->obj = load_obj(arena, obj_filename);
+        model->texture = load_texture(arena, tm_filename, tm_w, tm_h);
+        model->norm_map = load_texture(arena, nm_filename, nm_w, nm_h);
 
         return model;
 }
