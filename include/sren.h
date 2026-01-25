@@ -11,6 +11,14 @@
         #define VEC3(x, y, z) ((Vec3){(x), (y), (z)})
         #define VEC4(x, y, z) ((Vec4){(x), (y), (z), (w)})
 
+        #define MIN(x, y) ((x) < (y) ? (x) : (y))
+        #define MAX(x, y) ((x) > (y) ? (x) : (y))
+        #define MAX3(x, y, z) (MAX(MAX(x, y), z))
+        #define MIN3(x, y, z) (MIN(MIN(x, y), z))
+        
+        #define RGB(x, y, z)  (((x) << 16) | ((y) << 8) | (z))
+        #define RGBf(x, y, z) (((uint8_t)(x*255) << 16) | ((uint8_t)(y*255) << 8) | (uint8_t)(z*255))
+
         #define fmt_vec3 "(%f, %f, %f)"
         #define fmt_vec4 "(%f, %f, %f, %f)"
         #define fmt_mat3 "%f, %f, %f\n%f, %f, %f\n%f, %f, %f"
@@ -99,6 +107,8 @@
                 size_t model_count;
                 size_t light_count;
         } Scene;
+
+        extern Mat4 g_viewport; // @XXX exposing this for now...
 
         //
         // cvec3s_to_mat3 - constructs a 3x3 matrix from three 3D column vectors
@@ -372,18 +382,11 @@
         }
 
         //
-        // signed_tri_area2 - calculates twice the signed area of the triangle abc
+        // persp - basic perspective projection
         //
-        static inline double signed_tri_area2(Vec3 a, Vec3 b, Vec3 c) {
-                return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x);
-        }
-
-        //
-        // attenuate - attenuates a light value based on a given distance
-        //
-        static inline double attenuate(double intensity, double dist) {
-                intensity = intensity < 0 ? 0 : intensity/dist;
-                return intensity > 1 ? 1 : intensity;
+        static inline Vec3 persp(Vec3 v) {
+                double recip_z = -1.0/v.z;
+                return VEC3(v.x * recip_z, v.y * recip_z, v.z);
         }
 
         //
@@ -446,9 +449,11 @@
         }
 
         //
-        // set_light_view - computes a Light's view matrix for shadow map rendering
+        // move_light_to - moves a Light to a position in world-space and updates its view matrix
         //
-        static inline void set_light_view(Light *light) {
+        static inline void move_light_to(Light *light, Vec3 pos) {
+                light->pos = pos;
+
                 Vec3 n = unit(vec3_sub(light->pos, light->subject));
                 Vec3 l = unit(cross(light->up, n));
                 Vec3 m = cross(n, l);
@@ -463,27 +468,18 @@
                 memcpy(light->view_mat, view, sizeof(Mat4));
         }
 
-        //
-        // sample texture - samples a texture at (x, y)
-        //
-        static inline Vec3 sample_texture(Texture *texture, double x, double y) {
-                int u = x*(texture->width - 1);
-                int v = (1.0 - y)*(texture->height - 1);
-
-                size_t i = v*texture->width + u;
-
-                double one_255th = 1.0/255;
-
-                return (Vec3){
-                        .x = (double)texture->data[i * 3*sizeof(uint8_t)]     * one_255th,
-                        .y = (double)texture->data[i * 3*sizeof(uint8_t) + 1] * one_255th,
-                        .z = (double)texture->data[i * 3*sizeof(uint8_t) + 2] * one_255th
-                };
-        }
-
+        extern void clear_screen(char c);
+        extern void point(int x, int y, Vec3 colour);
+        extern void init_renderer(Arena *arena, uint32_t *framebuffer, size_t fb_width, size_t fb_height);
+        extern void line(Vec3 a, Vec3 b, Vec3 colour);
+        extern void render_model(Model *model, Camera *cam, Light *light);
+        extern double dbuf_read(int x, int y);
+        extern void reset_dbuf(void);
+        extern Vec3 render_text(Vec3 pos, double unit, Vec3 colour, const char *fmt, ...);
         extern Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h);
-        extern Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h);
-        extern Obj *load_obj(Arena *arena, char *filename);
+        extern double smap_read(Shadow_Map *shadow_map, int x, int y);
+        extern void render_model_smap(Model *model, Light *light);
+        extern void reset_smap(Shadow_Map *smap);
         extern Model *load_model(
                 Arena *arena,
                 char *obj_filename,

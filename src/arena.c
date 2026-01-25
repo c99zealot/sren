@@ -24,7 +24,7 @@ enum {
 };
 
 //
-// alignto - aligns `n` up to the power of two `alignment`
+// alignto - aligns n up to alignment
 //
 static inline size_t alignto(size_t n, size_t alignment) {
         return (n + alignment - 1) & ~(alignment - 1);

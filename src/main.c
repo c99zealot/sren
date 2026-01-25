@@ -7,6 +7,8 @@
 // @TODO view frustum, proper perspective transform
 // @TODO logging
 // @TODO dev console
+// @TODO? register an arena for SRen to allocate things in implicitly, models, textures, etc.
+// @TODO give shadow maps their own viewport transforms
 
 #include <math.h>
 #include <stdio.h>
@@ -15,30 +17,12 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdbool.h>
-#include <stdarg.h>
-#include <ctype.h>
 #include <float.h>
 
 #include <SDL2/SDL.h>
 
 #include "sren.h"
 #include "arena.h"
-
-#define SWAP(T, x, y) { \
-        T _tmp = x;     \
-        (x) = (y);      \
-        (y) = _tmp;     \
-}
-
-#define MIN(x, y) ((x) < (y) ? (x) : (y))
-#define MAX(x, y) ((x) > (y) ? (x) : (y))
-#define MAX3(x, y, z) (MAX(MAX(x, y), z))
-#define MIN3(x, y, z) (MIN(MIN(x, y), z))
-
-#define RGB(x, y, z)  (((x) << 16) | ((y) << 8) | (z))
-#define RGBf(x, y, z) (((uint8_t)(x*255) << 16) | ((uint8_t)(y*255) << 8) | (uint8_t)(z*255))
-
-#define SCREEN(x, y) (g_window_width * (g_window_height/2 - y) - g_window_width/2 + x)
 
 #define TIME(x) {                                                   \
         clock_t start = clock();                                    \
@@ -47,798 +31,18 @@
                 (double)(clock() - start) / CLOCKS_PER_SEC * 1000); \
 }
 
-SDL_Window  *g_window;
-SDL_Surface *g_screen;
-uint32_t *g_framebuffer;
-double *g_depth_buffer;
-
 const int g_window_width = 1000;
 const int g_window_height = 1000;
-const int g_min_x = -g_window_width  / 2;
-const int g_min_y = -g_window_height / 2;
-const int g_max_x =  g_window_width  / 2 - 1;
-const int g_max_y =  g_window_height / 2 - 1;
-
-Mat4 g_viewport = {
-        (g_window_width - 1)/2, 0.0,                     0.0, 0.0,
-        0.0,                    (g_window_height/2 - 1), 0.0, 0.0,
-        0.0,                    0.0,                     1.0, 0.0,
-        0.0,                    0.0,                     0.0, 1.0
-};
-
-enum {
-        GLYPH_END  = -1,
-        GLYPH_LIFT = -2,
-
-        GLYPH_UNKNOWN = 128,
-
-        GLYPH_0 = 0,
-        GLYPH_1,
-        GLYPH_2,
-        GLYPH_3,
-        GLYPH_4,
-        GLYPH_5,
-        GLYPH_6,
-        GLYPH_7,
-        GLYPH_8,
-        GLYPH_9,
-
-        GLYPH_ZERO  = '0',
-        GLYPH_ONE   = '1',
-        GLYPH_TWO   = '2',
-        GLYPH_THREE = '3',
-        GLYPH_FOUR  = '4',
-        GLYPH_FIVE  = '5',
-        GLYPH_SIX   = '6',
-        GLYPH_SEVEN = '7',
-        GLYPH_EIGHT = '8',
-        GLYPH_NINE  = '9',
-
-        GLYPH_A = 'A',
-        GLYPH_B = 'B',
-        GLYPH_C = 'C',
-        GLYPH_D = 'D',
-        GLYPH_E = 'E',
-        GLYPH_F = 'F',
-        GLYPH_G = 'G',
-        GLYPH_H = 'H',
-        GLYPH_I = 'I',
-        GLYPH_J = 'J',
-        GLYPH_K = 'K',
-        GLYPH_L = 'L',
-        GLYPH_M = 'M',
-        GLYPH_N = 'N',
-        GLYPH_O = 'O',
-        GLYPH_P = 'P',
-        GLYPH_Q = 'Q',
-        GLYPH_R = 'R',
-        GLYPH_S = 'S',
-        GLYPH_T = 'T',
-        GLYPH_U = 'U',
-        GLYPH_V = 'V',
-        GLYPH_W = 'W',
-        GLYPH_X = 'X',
-        GLYPH_Y = 'Y',
-        GLYPH_Z = 'Z',
-
-        GLYPH_a = 'a',
-        GLYPH_b = 'b',
-        GLYPH_c = 'c',
-        GLYPH_d = 'd',
-        GLYPH_e = 'e',
-        GLYPH_f = 'f',
-        GLYPH_g = 'g',
-        GLYPH_h = 'h',
-        GLYPH_i = 'i',
-        GLYPH_j = 'j',
-        GLYPH_k = 'k',
-        GLYPH_l = 'l',
-        GLYPH_m = 'm',
-        GLYPH_n = 'n',
-        GLYPH_o = 'o',
-        GLYPH_p = 'p',
-        GLYPH_q = 'q',
-        GLYPH_r = 'r',
-        GLYPH_s = 's',
-        GLYPH_t = 't',
-        GLYPH_u = 'u',
-        GLYPH_v = 'v',
-        GLYPH_w = 'w',
-        GLYPH_x = 'x',
-        GLYPH_y = 'y',
-        GLYPH_z = 'z',
-
-        GLYPH_DOT         = '.',
-        GLYPH_SPACE       = ' ',
-        GLYPH_COMMA       = ',',
-        GLYPH_LBRACK      = '[',
-        GLYPH_RBRACK      = ']',
-        GLYPH_LPAREN      = '(',
-        GLYPH_RPAREN      = ')',
-        GLYPH_LBRACE      = '{',
-        GLYPH_RBRACE      = '}',
-        GLYPH_QUESTION    = '?',
-        GLYPH_UNDERSCORE  = '_',
-        GLYPH_EXCLAMATION = '!',
-        GLYPH_SQUOTE      = '\'',
-        GLYPH_DQUOTE      = '"',
-        GLYPH_DOLLAR      = '$',
-        GLYPH_PERCENT     = '%',
-        GLYPH_CARET       = '^',
-        GLYPH_AMPERSAND   = '&',
-        GLYPH_ASTERISK    = '*',
-        GLYPH_MINUS       = '-',
-        GLYPH_PLUS        = '+',
-        GLYPH_AT          = '@',
-        GLYPH_TILDE       = '~',
-        GLYPH_HASH        = '#',
-        GLYPH_EQUALS      = '=',
-        GLYPH_LT          = '<',
-        GLYPH_GT          = '>',
-        GLYPH_COLON       = ':',
-        GLYPH_SEMICOLON   = ';',
-        GLYPH_FSLASH      = '/',
-        GLYPH_BSLASH      = '\\',
-        GLYPH_PIPE        = '|',
-        GLYPH_BACKTICK    = '`',
-};
-
-int16_t g_glyph_seqs[][16] = {
-        [GLYPH_UNKNOWN] = {0, 2, 11, 9, 0, 11, 9, 2, GLYPH_END},
-
-        [GLYPH_0] = {9, 3, 5, 11, 9, 5,          GLYPH_END},
-        [GLYPH_1] = {6, 4, 10, 9, 11,            GLYPH_END},
-        [GLYPH_2] = {3, 5, 8, 6, 9, 11,          GLYPH_END},
-        [GLYPH_3] = {3, 5, 8, 6, 8, 11, 9,       GLYPH_END},
-        [GLYPH_4] = {11, 5, 6, 8,                GLYPH_END},
-        [GLYPH_5] = {5, 3, 6, 8, 11, 9,          GLYPH_END},
-        [GLYPH_6] = {5, 6, 8, 11, 9, 6,          GLYPH_END},
-        [GLYPH_7] = {3, 5, 9,                    GLYPH_END},
-        [GLYPH_8] = {8, 6, 3, 5, 11, 9, 6,       GLYPH_END},
-        [GLYPH_9] = {5, 6, 3, 5, 8, 6, 8, 11, 9, GLYPH_END},
-
-        [GLYPH_ZERO]  = {9, 3, 5, 11, 9, 5,          GLYPH_END},
-        [GLYPH_ONE]   = {6, 4, 10, 9, 11,            GLYPH_END},
-        [GLYPH_TWO]   = {3, 5, 8, 6, 9, 11,          GLYPH_END},
-        [GLYPH_THREE] = {3, 5, 8, 6, 8, 11, 9,       GLYPH_END},
-        [GLYPH_FOUR]  = {11, 5, 6, 8,                GLYPH_END},
-        [GLYPH_FIVE]  = {5, 3, 6, 8, 11, 9,          GLYPH_END},
-        [GLYPH_SIX]   = {5, 6, 8, 11, 9, 6,          GLYPH_END},
-        [GLYPH_SEVEN] = {3, 5, 9,                    GLYPH_END},
-        [GLYPH_EIGHT] = {8, 6, 3, 5, 11, 9, 6,       GLYPH_END},
-        [GLYPH_NINE]  = {5, 6, 3, 5, 8, 6, 8, 11, 9, GLYPH_END},
-
-        [GLYPH_A] = {6, 8, GLYPH_LIFT, 9, 3, 1, 5, 11,           GLYPH_END},
-        [GLYPH_B] = {3, 9, 10, 8, 4, 3, 0, 1, 5, 4,              GLYPH_END},
-        [GLYPH_C] = {11, 10, 6, 3, 1, 2,                         GLYPH_END},
-        [GLYPH_D] = {0, 1, 5, 8, 10, 9, 0,                       GLYPH_END},
-        [GLYPH_E] = {2, 0, 9, 11, GLYPH_LIFT, 3, 5,              GLYPH_END},
-        [GLYPH_F] = {2, 0, 3, 5, 3, 9,                           GLYPH_END},
-        [GLYPH_G] = {2, 0, 9, 11, 8, 7,                          GLYPH_END},
-        [GLYPH_H] = {0, 9, GLYPH_LIFT, 2, 11, GLYPH_LIFT, 3, 5,  GLYPH_END},
-        [GLYPH_I] = {0, 2, GLYPH_LIFT, 9, 11, GLYPH_LIFT, 1, 10, GLYPH_END},
-        [GLYPH_J] = {0, 2, GLYPH_LIFT, 1, 10, 9,                 GLYPH_END},
-        [GLYPH_K] = {0, 9, GLYPH_LIFT, 2, 3, 11,                 GLYPH_END},
-        [GLYPH_L] = {0, 9, 11,                                   GLYPH_END},
-        [GLYPH_M] = {9, 0, 7, 2, 11,                             GLYPH_END},
-        [GLYPH_N] = {9, 0, 11, 2,                                GLYPH_END},
-        [GLYPH_O] = {9, 0, 2, 11, 9,                             GLYPH_END},
-        [GLYPH_P] = {9, 0, 2, 8, 6,                              GLYPH_END},
-        [GLYPH_Q] = {3, 1, 5, 8, 10, 6, 3, GLYPH_LIFT, 7, 11,    GLYPH_END},
-        [GLYPH_R] = {9, 0, 1, 5, 7, 11, 7, 6,                    GLYPH_END},
-        [GLYPH_S] = {2, 3, 8, 9,                                 GLYPH_END},
-        [GLYPH_T] = {1, 10, GLYPH_LIFT, 0, 2,                    GLYPH_END},
-        [GLYPH_U] = {0, 9, 11, 2,                                GLYPH_END},
-        [GLYPH_V] = {0, 10, 2,                                   GLYPH_END},
-        [GLYPH_W] = {0, 9, 7, 11, 2,                             GLYPH_END},
-        [GLYPH_X] = {9, 2, 7, 0, 11,                             GLYPH_END},
-        [GLYPH_Y] = {0, 7, 2, 7, 10,                             GLYPH_END},
-        [GLYPH_Z] = {0, 2, 9, 11,                                GLYPH_END},
-
-        [GLYPH_a] = {3, 5, 11, 9, 6, 8,             GLYPH_END},
-        [GLYPH_b] = {3, 9, 11, 8, 6,                GLYPH_END},
-        [GLYPH_c] = {11, 9, 3, 5,                   GLYPH_END},
-        [GLYPH_d] = {5, 11, 9, 6, 8,                GLYPH_END},
-        [GLYPH_e] = {11, 9, 3, 5, 6,                GLYPH_END},
-        [GLYPH_f] = {5, 4, 10, 9, GLYPH_LIFT, 6, 8, GLYPH_END},
-        [GLYPH_g] = {9, 11,5, 3, 6, 8,              GLYPH_END},
-        [GLYPH_h] = {3, 9, 6, 8, 11,                GLYPH_END},
-        [GLYPH_i] = {4, 10,                         GLYPH_END},
-        [GLYPH_j] = {4, 10, 9,                      GLYPH_END},
-        [GLYPH_k] = {3, 9, 6, 11, 6, 5,             GLYPH_END},
-        [GLYPH_l] = {4, 10, 11,                     GLYPH_END},
-        [GLYPH_m] = {9, 3, 7, 5, 11,                GLYPH_END},
-        [GLYPH_n] = {9, 3, 11, 5,                   GLYPH_END},
-        [GLYPH_o] = {9, 3, 5, 11, 9,                GLYPH_END},
-        [GLYPH_p] = {9, 3, 5, 8, 6,                 GLYPH_END},
-        [GLYPH_q] = {8, 10, 4, 3, 6, 7,             GLYPH_END},
-        [GLYPH_r] = {9, 6, 5,                       GLYPH_END},
-        [GLYPH_s] = {5, 6, 8, 9,                    GLYPH_END},
-        [GLYPH_t] = {7, 6, 3, 9, 11,                GLYPH_END},
-        [GLYPH_u] = {3, 9, 11, 5,                   GLYPH_END},
-        [GLYPH_v] = {3, 10, 5,                      GLYPH_END},
-        [GLYPH_w] = {3, 9, 7, 11, 5,                GLYPH_END},
-        [GLYPH_x] = {9, 5, 7, 3, 11,                GLYPH_END},
-        [GLYPH_y] = {3, 7, 5, 7, 10,                GLYPH_END},
-        [GLYPH_z] = {3, 5, 9, 11,                   GLYPH_END},
-
-        [GLYPH_PERCENT]     = {0, 1, 4, 3, 0, GLYPH_LIFT, 9, 2, GLYPH_LIFT, 11, 10, 7, 8, 11, GLYPH_END},
-        [GLYPH_ASTERISK]    = {3, 11, GLYPH_LIFT, 9, 5, GLYPH_LIFT, 6, 8, GLYPH_LIFT, 4, 10,  GLYPH_END},
-        [GLYPH_HASH]        = {3, 5, GLYPH_LIFT, 6, 8, GLYPH_LIFT, 9, 1, GLYPH_LIFT, 10, 2,   GLYPH_END},
-        [GLYPH_QUESTION]    = {10, 10, GLYPH_LIFT, 7, 4, 5, 2, 0,                             GLYPH_END},
-        [GLYPH_DOLLAR]      = {9, 8, 3, 2, GLYPH_LIFT, 1, 10,                                 GLYPH_END},
-        [GLYPH_EXCLAMATION] = {10, 10, GLYPH_LIFT, 7, 1,                                      GLYPH_END},
-        [GLYPH_COLON]       = {4, 4, GLYPH_LIFT, 10, 10,                                      GLYPH_END},
-        [GLYPH_PLUS]        = {6, 8, GLYPH_LIFT, 4, 10,                                       GLYPH_END},
-        [GLYPH_AT]          = {11, 9, 0, 2, 8, 7, 4, 5,                                       GLYPH_END},
-        [GLYPH_DQUOTE]      = {0, 3, GLYPH_LIFT, 1, 4,                                        GLYPH_END},
-        [GLYPH_EQUALS]      = {3, 5, GLYPH_LIFT, 6, 8,                                        GLYPH_END},
-        [GLYPH_SEMICOLON]   = {4, 4, GLYPH_LIFT, 7, 9,                                        GLYPH_END},
-        [GLYPH_AMPERSAND]   = {11, 3, 1, 5, 6, 9, 8,                                          GLYPH_END},
-        [GLYPH_RBRACK]      = {1, 2, 11, 10,                                                  GLYPH_END},
-        [GLYPH_LPAREN]      = {2, 4, 7, 11,                                                   GLYPH_END},
-        [GLYPH_LBRACE]      = {2, 4, 7, 11,                                                   GLYPH_END},
-        [GLYPH_LBRACK]      = {1, 0, 9, 10,                                                   GLYPH_END},
-        [GLYPH_RPAREN]      = {0, 4, 7, 9,                                                    GLYPH_END},
-        [GLYPH_TILDE]       = {6, 4, 8, 5,                                                    GLYPH_END},
-        [GLYPH_RBRACE]      = {0, 4, 7, 9,                                                    GLYPH_END},
-        [GLYPH_LT]          = {5, 6, 11,                                                      GLYPH_END},
-        [GLYPH_GT]          = {3, 8, 9,                                                       GLYPH_END},
-        [GLYPH_CARET]       = {3, 1, 5,                                                       GLYPH_END},
-        [GLYPH_UNDERSCORE]  = {9, 11,                                                         GLYPH_END},
-        [GLYPH_BSLASH]      = {0, 10,                                                         GLYPH_END},
-        [GLYPH_PIPE]        = {1, 10,                                                         GLYPH_END},
-        [GLYPH_MINUS]       = {6, 8,                                                          GLYPH_END},
-        [GLYPH_COMMA]       = {7, 9,                                                          GLYPH_END},
-        [GLYPH_SQUOTE]      = {1, 4,                                                          GLYPH_END},
-        [GLYPH_DOT]         = {9, 9,                                                          GLYPH_END},
-        [GLYPH_FSLASH]      = {9, 1,                                                          GLYPH_END},
-        [GLYPH_BACKTICK]    = {0, 4,                                                          GLYPH_END},
-        [GLYPH_SPACE]       = {0,                                                             GLYPH_END},
-};
-
-//
-// point - draws a point at (x, y) in the frame buffer
-//
-static inline void point(int x, int y, Vec3 colour) {
-        g_framebuffer[SCREEN(x, y)] = RGBf(colour.x, colour.y, colour.z);
-}
-
-//
-// dbuf_write - writes a depth value at (x, y) in the depth buffer
-//
-static inline void dbuf_write(int x, int y, double depth) {
-        g_depth_buffer[SCREEN(x, y)] = depth;
-}
-
-//
-// dbuf_read - reads the depth value at (x, y) in the depth buffer
-//
-static inline double dbuf_read(int x, int y) {
-        return g_depth_buffer[SCREEN(x, y)];
-}
-
-//
-// smap_write - writes a depth value at (x, y) in a shadow map
-//
-static inline void smap_write(Shadow_Map *shadow_map, int x, int y, double depth) {
-        size_t i = (shadow_map->width * (shadow_map->height/2 - y) - shadow_map->width/2 + x);
-        shadow_map->data[i] = depth;
-}
-
-//
-// smap_read - reads the depth value at (x, y) in a shadow map
-//
-static inline double smap_read(Shadow_Map *shadow_map, int x, int y) {
-        size_t i = (shadow_map->width * (shadow_map->height/2 - y) - shadow_map->width/2 + x);
-        return shadow_map->data[i];
-}
-
-//
-// line - draws a line in the frame buffer from (ax, ay) to (bx, by)
-//
-void line(Vec3 a, Vec3 b, Vec3 colour) {
-        if (a.x == b.x && a.y == b.y) {
-                point(a.x, a.y, colour);
-                return;
-        }
-
-        int steep = abs(a.y - b.y) > abs(a.x - b.x);
-        if (steep) {
-                SWAP(int, a.x, a.y);
-                SWAP(int, b.x, b.y);
-        }
-
-        if (a.x > b.x) {
-                SWAP(int, a.x, b.x);
-                SWAP(int, a.y, b.y);
-        }
-
-        float _y = a.y;
-        float m = (b.y - a.y) / (float)(b.x - a.x);
-        for (int _x = a.x; _x <= b.x; ++_x) {
-                if (steep) {
-                        point(_y, _x, colour);
-                } else {
-                        point(_x, _y, colour);
-                }
-                _y += m;
-        }
-}
-
-//
-// is_valid_glyph - checks whether a glyph is valid
-//
-static inline int is_valid_glyph(uint8_t glyph_id) {
-        return glyph_id <= 9 || glyph_id == GLYPH_SPACE || isprint(glyph_id);
-}
-
-//
-// render_glyph - renders a glyph to the framebuffer
-//
-Vec3 render_glyph(Vec3 pos, double unit, Vec3 colour, uint8_t glyph_id) {
-        Vec3 points[] = {
-                pos,
-                VEC3(pos.x + unit, pos.y, 0),
-                VEC3(pos.x + 2*unit, pos.y, 0),
-
-                VEC3(pos.x, pos.y - unit, 0),
-                VEC3(pos.x + unit, pos.y - unit, 0),
-                VEC3(pos.x + 2*unit, pos.y - unit, 0),
-
-                VEC3(pos.x, pos.y - 2*unit, 0),
-                VEC3(pos.x + unit, pos.y - 2*unit, 0),
-                VEC3(pos.x + 2*unit, pos.y - 2*unit, 0),
-
-                VEC3(pos.x, pos.y - 3*unit, 0),
-                VEC3(pos.x + unit, pos.y - 3*unit, 0),
-                VEC3(pos.x + 2*unit, pos.y - 3*unit, 0),
-        };
-
-        for (int i = 0; i < 12; ++i) {
-                points[i] = m4v3_mul(g_viewport, points[i]);
-        }
-
-        if (!is_valid_glyph(glyph_id)) {
-                glyph_id = GLYPH_UNKNOWN;
-        }
-
-        Vec3 line_start = points[g_glyph_seqs[glyph_id][0]];
-        for (int i = 1; g_glyph_seqs[glyph_id][i] != GLYPH_END; ++i) {
-                int point_index = g_glyph_seqs[glyph_id][i];
-                if (point_index == GLYPH_LIFT) {
-                        line_start = points[g_glyph_seqs[glyph_id][i++ + 1]];
-                        continue;
-                }
-                line(line_start, points[point_index], colour);
-                line_start = points[point_index];
-        }
-
-        pos.x += ((glyph_id == GLYPH_DOT) ? 1 : 3) * unit;
-        return pos;
-}
-
-//
-// render_text_int - called by render_text to render integers as text to the framebuffer
-//
-Vec3 render_text_int(Vec3 pos, double unit, Vec3 colour, int d) {
-        if (d == 0) {
-                return render_glyph(pos, unit, colour, GLYPH_0);
-        }
-
-        if (d < 0) {
-                pos = render_glyph(pos, unit, colour, GLYPH_MINUS);
-                d = -d;
-        }
-
-        int place_val = 1;
-        while (place_val < d) {
-                place_val *= 10;
-        }
-
-        if (place_val > d) {
-                place_val /= 10;
-        }
-
-        while (place_val >= 1) {
-                pos = render_glyph(pos, unit, colour, (d / place_val) % 10);
-                place_val /= 10;
-        }
-
-        return pos;
-}
-
-//
-// render_text_double - called by render_text to render doubles as text to the framebufer
-//
-Vec3 render_text_double(Vec3 pos, double unit, Vec3 colour, double f) {
-        if (f < 0) {
-                pos = render_glyph(pos, unit, colour, GLYPH_MINUS);
-                f = -f;
-        }
-
-        long whole = (long)f;
-
-        if (whole == 0) {
-                pos = render_glyph(pos, unit, colour, GLYPH_0);
-        }
-
-        int place_val = 1;
-        while (place_val < whole) {
-                place_val *= 10;
-        }
-
-        if (place_val > whole) {
-                place_val /= 10;
-        }
-
-        while (place_val >= 1) {
-                pos = render_glyph(pos, unit, colour, (whole / place_val) % 10);
-                place_val /= 10;
-        }
-
-        pos = render_glyph(pos, unit, colour, GLYPH_DOT);
-
-        int max_digits = 2;
-        do {
-                f *= 10;
-                pos = render_glyph(pos, unit, colour, (long)f % 10);
-        } while (f > (long)f && max_digits-- > 1);
-
-        return pos;
-}
-
-//
-// render_text_vector - called by render_text to render a vector as text to the framebuffer
-//
-Vec3 render_text_vector(Vec3 pos, double unit, Vec3 colour, const Vec3 *v) {
-        pos = render_glyph(pos, unit, colour, GLYPH_LPAREN);
-        pos = render_text_double(pos, unit, colour, v->x);
-        pos = render_glyph(pos, unit, colour, GLYPH_COMMA);
-        pos = render_text_double(pos, unit, colour, v->y);
-        pos = render_glyph(pos, unit, colour, GLYPH_COMMA);
-        pos = render_text_double(pos, unit, colour, v->z);
-        pos = render_glyph(pos, unit, colour, GLYPH_RPAREN);
-        return pos;
-}
-
-//
-// render_text - renders formatted text to the framebuffer
-//
-Vec3 render_text(Vec3 pos, double unit, Vec3 colour, const char *fmt, ...) {
-        va_list arglist;
-        va_start(arglist, fmt);
-
-        if (pos.y >= 1.0 || pos.x <= -1.0)  {
-                goto _exit;
-        }
-
-        Vec3 curs = pos;
-        for (int i = 0; fmt[i] != '\0'; ++i) {
-                if (curs.y - 4*unit <= -1.0) {
-                        goto _exit;
-                }
-
-                if (fmt[i] == '\n' || curs.x + 3*unit >= 1.0) {
-                        curs.x = pos.x;
-                        curs.y -= 4*unit;
-                } else if (fmt[i] == '%') {
-                        ++i;
-                        if (fmt[i] == 'd') {
-                                curs = render_text_int(curs, unit, colour, va_arg(arglist, int));
-                        } else if (fmt[i] == 'f') {
-                                curs = render_text_double(curs, unit, colour, va_arg(arglist, double));
-                        } else if (fmt[i] == 'v') {
-                                curs = render_text_vector(curs, unit, colour, va_arg(arglist, Vec3*));
-                        } else if (fmt[i] == 's') {
-                                curs = render_text(curs, unit, colour, va_arg(arglist, char*));
-                        } else if (fmt[i] == 'c') {
-                                curs = render_glyph(curs, unit, colour, va_arg(arglist, int));
-                        } else if (fmt[i] == '%') {
-                                curs = render_glyph(curs, unit, colour, GLYPH_PERCENT);
-                        }
-                } else {
-                        curs = render_glyph(curs, unit, colour, fmt[i]);
-                }
-        }
-
-_exit:
-        va_end(arglist);
-        return curs;
-}
-
-//
-// persp - basic perspective projection
-//
-static inline Vec3 persp(Vec3 v) {
-        double recip_z = -1.0/v.z;
-        return VEC3(v.x * recip_z, v.y * recip_z, v.z);
-}
 
 //
 // out_of_view - checks whether a point resides outside of the screen
 //
-int out_of_view(Vec3 v) {
+static int out_of_view(Vec3 v) {
         return (v.x > g_window_width/2 - 1) ||
                (v.x < -g_window_width/2) ||
                (v.y > g_window_height/2 - 1) ||
                (v.y < -g_window_height/2);
 }
-
-//
-// render_face - renders a single face in a model to the framebuffer, performs texture mapping & Gouraud shading
-//
-void render_face(Face *f, Model *model, Camera *cam, Light *light) {
-        Vec3 *v = model->obj->vertices;
-        Vec3 *vt = model->obj->uvs;
-        Vec3 *vn = model->obj->norms;
-
-        Vec3 a = v[f->v0[VERTEX]];
-        Vec3 b = v[f->v1[VERTEX]];
-        Vec3 c = v[f->v2[VERTEX]];
-
-        Vec3 a_lightview = m4v3_mul(light->view_mat, a);
-        Vec3 b_lightview = m4v3_mul(light->view_mat, b);
-        Vec3 c_lightview = m4v3_mul(light->view_mat, c);
-
-        a = m4v3_mul(cam->view_mat, a);
-        b = m4v3_mul(cam->view_mat, b);
-        c = m4v3_mul(cam->view_mat, c);
-
-        if (a.z > 0 || b.z > 0 || c.z > 0) {
-                return;
-        }
-
-        a = persp(a);
-        b = persp(b);
-        c = persp(c);
-
-        Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
-        if (face_norm.z <= 0) {
-                return;
-        }
-
-        double a_recip_z = 1.0/a.z;
-        double b_recip_z = 1.0/b.z;
-        double c_recip_z = 1.0/c.z;
-
-        Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
-        Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
-        Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
-
-        Vec3 na = m4v3_mul(cam->inv_tr, vn[f->v0[NORM]]);
-        Vec3 nb = m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]);
-        Vec3 nc = m4v3_mul(cam->inv_tr, vn[f->v2[NORM]]);
-
-        Vec3 light_in_view = m4v3_mul(cam->view_mat, light->pos);
-
-        Vec3 a_to_light = vec3_sub(light_in_view, a);
-        Vec3 b_to_light = vec3_sub(light_in_view, b);
-        Vec3 c_to_light = vec3_sub(light_in_view, c);
-
-        Vec3 a_light_proj = vec3_scale(a_lightview, a_recip_z);
-        Vec3 b_light_proj = vec3_scale(b_lightview, b_recip_z);
-        Vec3 c_light_proj = vec3_scale(c_lightview, c_recip_z);
-
-        double light_a = light->intensity * attenuate(vec3_dot(na, unit(a_to_light)), vec3_norm(a_to_light));
-        double light_b = light->intensity * attenuate(vec3_dot(nb, unit(b_to_light)), vec3_norm(b_to_light));
-        double light_c = light->intensity * attenuate(vec3_dot(nc, unit(c_to_light)), vec3_norm(c_to_light));
-
-        a = m4v3_mul(g_viewport, a);
-        b = m4v3_mul(g_viewport, b);
-        c = m4v3_mul(g_viewport, c);
-
-        double recip_area = 1.0/signed_tri_area2(a, b, c);
-
-        int min_x = MIN3(a.x, b.x, c.x);
-        int max_x = MAX3(a.x, b.x, c.x);
-        int min_y = MIN3(a.y, b.y, c.y);
-        int max_y = MAX3(a.y, b.y, c.y);
-
-        min_x = MAX(min_x, g_min_x);
-        min_y = MAX(min_y, g_min_y);
-        max_x = MIN(max_x, g_max_x);
-        max_y = MIN(max_y, g_max_y);
-
-        double Aa = b.y - c.y;
-        double Ab = c.y - a.y;
-        double Ac = a.y - b.y;
-                                   
-        double Ba = c.x - b.x;
-        double Bb = a.x - c.x;
-        double Bc = b.x - a.x;
-
-        double Ca = b.x*c.y - c.x*b.y;
-        double Cb = c.x*a.y - a.x*c.y;
-        double Cc = a.x*b.y - b.x*a.y;
-              
-        double Ea = Aa*min_x + Ba*max_y + Ca;
-        double Eb = Ab*min_x + Bb*max_y + Cb;
-        double Ec = Ac*min_x + Bc*max_y + Cc;
-
-        double Ea_x0 = Ea;
-        double Eb_x0 = Eb;
-        double Ec_x0 = Ec;
-
-        #define INTERP(a, b, c)     (recip_area * (Ea*(a) + Eb*(b) + Ec*(c)))
-        #define VEC_INTERP(a, b, c) (vec3_scale(vec3_add(vec3_scale(a, Ea), vec3_add(vec3_scale(b, Eb), \
-                                        vec3_scale(c, Ec))), recip_area))
-
-        for (int y = max_y; y >= min_y; --y) {
-                for (int x = min_x; x <= max_x; ++x) {
-                        if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                double interp_recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
-
-                                double depth = -interp_recip_z;
-                                if (depth <= dbuf_read(x, y)) {
-                                        continue;
-                                }
-
-                                Vec3 uv = VEC_INTERP(ta, tb, tc);
-                                uv = vec3_scale(uv, 1.0/interp_recip_z);
-
-                                Vec3 interp_light_proj = VEC_INTERP(a_light_proj, b_light_proj, c_light_proj);
-                                interp_light_proj = vec3_scale(interp_light_proj, 1.0/interp_recip_z);
-                                interp_light_proj = m4v3_mul(g_viewport, persp(interp_light_proj));
-
-                                double intensity = 0.1;
-                                if (smap_read(light->shadow_map, interp_light_proj.x, interp_light_proj.y) <= interp_light_proj.z + 0.05) {
-                                        intensity = INTERP(light_a, light_b, light_c);
-                                }
-
-                                Vec3 colour = sample_texture(model->texture, uv.x, uv.y);
-                                colour.x *= light->colour.x;
-                                colour.y *= light->colour.y;
-                                colour.z *= light->colour.z;
-                                colour = vec3_scale(colour, intensity);
-
-                                point(x, y, colour);
-                                dbuf_write(x, y, depth);
-                        }
-
-                        Ea += Aa;
-                        Eb += Ab;
-                        Ec += Ac;
-                }
-
-                Ea = Ea_x0 -= Ba;
-                Eb = Eb_x0 -= Bb;
-                Ec = Ec_x0 -= Bc;
-        }
-
-        #undef INTERP
-        #undef VEC_INTERP
-}
-
-//
-// render_face_smap - renders a single face in a model to a shadow map
-//
-void render_face_smap(Face *f, Model *model, Light *light) {
-        Vec3 *v = model->obj->vertices;
-
-        Vec3 a = persp(m4v3_mul(light->view_mat, v[f->v0[VERTEX]]));
-        Vec3 b = persp(m4v3_mul(light->view_mat, v[f->v1[VERTEX]]));
-        Vec3 c = persp(m4v3_mul(light->view_mat, v[f->v2[VERTEX]]));
-
-        if (a.z > 0 || b.z > 0 || c.z > 0) {
-                return;
-        }
-
-        Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
-        if (face_norm.z <= 0) {
-                return;
-        }
-
-        a = m4v3_mul(g_viewport, a);
-        b = m4v3_mul(g_viewport, b);
-        c = m4v3_mul(g_viewport, c);
-
-        double recip_area = 1.0/signed_tri_area2(a, b, c);
-
-        int min_x = MIN3(a.x, b.x, c.x);
-        int max_x = MAX3(a.x, b.x, c.x);
-        int min_y = MIN3(a.y, b.y, c.y);
-        int max_y = MAX3(a.y, b.y, c.y);
-
-        min_x = MAX(min_x, g_min_x);
-        min_y = MAX(min_y, g_min_y);
-        max_x = MIN(max_x, g_max_x);
-        max_y = MIN(max_y, g_max_y);
-
-        double Aa = b.y - c.y;
-        double Ab = c.y - a.y;
-        double Ac = a.y - b.y;
-                                   
-        double Ba = c.x - b.x;
-        double Bb = a.x - c.x;
-        double Bc = b.x - a.x;
-
-        double Ca = b.x*c.y - c.x*b.y;
-        double Cb = c.x*a.y - a.x*c.y;
-        double Cc = a.x*b.y - b.x*a.y;
-              
-        double Ea = Aa*min_x + Ba*max_y + Ca;
-        double Eb = Ab*min_x + Bb*max_y + Cb;
-        double Ec = Ac*min_x + Bc*max_y + Cc;
-
-        double Ea_x0 = Ea;
-        double Eb_x0 = Eb;
-        double Ec_x0 = Ec;
-
-        for (int y = max_y; y >= min_y; --y) {
-                for (int x = min_x; x <= max_x; ++x) {
-                        if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                double depth = recip_area * (Ea*a.z + Eb*b.z + Ec*c.z);
-                                if (depth > smap_read(light->shadow_map, x, y)) {
-                                        smap_write(light->shadow_map, x, y, depth);
-                                }
-                        }
-
-                        Ea += Aa;
-                        Eb += Ab;
-                        Ec += Ac;
-                }
-
-                Ea = Ea_x0 -= Ba;
-                Eb = Eb_x0 -= Bb;
-                Ec = Ec_x0 -= Bc;
-        }
-}
-
-//
-// render_model - renders all the faces in a model
-//
-void render_model(Model *model, Camera *cam, Light *light) {
-        Obj *obj = model->obj;
-        Face *f = obj->faces;
-
-        for (int i = 0; i < obj->face_count; ++i) {
-                render_face(&f[i], model, cam, light);
-        }
-}
-
-//
-// render_model_smap - renders depths of a model's faces to a shadow map
-//
-void render_model_smap(Model *model, Light *light) {
-        Obj *obj = model->obj;
-        Vec3 *v = obj->vertices;
-        Face *f = obj->faces;
-
-        for (int i = 0; i < obj->face_count; ++i) {
-                render_face_smap(&f[i], model, light);
-        }
-}
-
-//
-// reset_dbuf - resets the depth buffer to the maximum depth value
-//
-void reset_dbuf(void) {
-        for (int i = 0; i < g_window_width*g_window_height; ++i) {
-                g_depth_buffer[i] = -1024.0;
-        }
-}
-
-//
-// reset_smap - resets a Light's shadow map to the maximum depth value
-//
-void reset_smap(Light *light) {
-        Shadow_Map *smap = light->shadow_map;
-        for (int i = 0; i < smap->width*smap->height; ++i) {
-                smap->data[i] = -1024.0;
-        }
-}
-
-#if 0
-void draw_smap(Shadow_Map *smap, uint8_t *pixels) {
-        for (int i = 0; i < smap->width*smap->height; ++i) {
-                double d = (smap->data[i] + 4) / 8;
-                uint32_t colour = RGBf(d, d, d);
-                memcpy(pixels, &colour, 4);
-                pixels += 4;
-        }
-}
-#endif
 
 //
 // render_axes - renders portions of the xyz axes to the framebuffer
@@ -878,34 +82,34 @@ int main(int argc, char **argv) {
                 return -1;
         }
 
-        if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
+        if (SDL_Init(SDL_INIT_VIDEO) != 0) {
                 fprintf(stderr, "SDL_Init failure: %s\n", SDL_GetError());
                 return -1;
         }
 
-        g_window = SDL_CreateWindow("sren", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
-        if (g_window == NULL) {
+        SDL_Window *window = SDL_CreateWindow("sren", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_window_width, g_window_height, SDL_WINDOW_SHOWN);
+        if (window == NULL) {
                 fprintf(stderr, "SDL_CreateWindow failure: %s\n", SDL_GetError());
                 SDL_Quit();
                 return -1;
         }
 
-        Arena render_arena;
-        arena_init(&render_arena, ARENA_RESERVE_DEFAULT, 1 << 16, sizeof(double));
-        g_depth_buffer = arena_alloc(&render_arena, g_window_width*g_window_height);
-
-        Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, 1024, 1024, 0, 0);
-        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor_texture.tex", NULL, 1024, 1024, 0, 0);
-        //Scene *scene = mkscene(&render_arena);
-
-        g_screen = SDL_GetWindowSurface(g_window);
-        if (g_screen == NULL) {
+        SDL_Surface *screen = SDL_GetWindowSurface(window);
+        if (screen == NULL) {
                 fprintf(stderr, "SDL_GetWindowSurface failure: %s\n", SDL_GetError());
                 SDL_Quit();
                 return -1;
         }
-        g_framebuffer = g_screen->pixels;
         
+        Arena render_arena;
+        arena_init(&render_arena, ARENA_RESERVE_DEFAULT, 1 << 24, 1);
+
+        init_renderer(&render_arena, screen->pixels, g_window_width, g_window_height);
+
+        Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, 1024, 1024, 0, 0);
+        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, 1024, 1024, 0, 0);
+        //Scene *scene = mkscene(&render_arena);
+ 
         Light light = {
                 .colour = VEC3(1.0, 1.0, 1.0),
                 .subject = VEC3(0, 0, 0),
@@ -921,7 +125,7 @@ int main(int argc, char **argv) {
         };
         init_cam(&cam);
 
-        SDL_WarpMouseInWindow(g_window, g_window_width/2, g_window_height/2);
+        SDL_WarpMouseInWindow(window, g_window_width/2, g_window_height/2);
         SDL_SetRelativeMouseMode(SDL_TRUE);
 
         const double mouse_sens = 0.02;
@@ -970,9 +174,7 @@ int main(int argc, char **argv) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                 }
 
-                light.pos = VEC3(1.5*sin(i), 1, 1.5*cos(i));
-                //light.colour = VEC3(fabs(sin(i)), fabs(cos(i)), fabs(sin(i)));
-                set_light_view(&light);
+                move_light_to(&light, VEC3(1.5*sin(i), 1, 1.5*cos(i)));
 
                 double cx = cos(-curs_dx);
                 double cy = cos(-curs_dy);
@@ -987,12 +189,14 @@ int main(int argc, char **argv) {
 
                 move_cam(&cam, cam_rot, cam_vel);
 
+                // @TODO same thing as the shadow mapping - handle implicitly
                 reset_dbuf();
 
                 clock_t start = clock();
 
                 if (frames_drawn % 2) {
-                        reset_smap(&light);
+                        // @TODO this is a bit low-level for shadow map handling, tie it to moving the light source and organise everything in a Scene so it can be re-rendered to the shadow map
+                        reset_smap(light.shadow_map);
                         render_model_smap(floor_model, &light);
                         render_model_smap(main_model, &light);
                 }
@@ -1046,9 +250,9 @@ int main(int argc, char **argv) {
                         render_text(light_pos_proj, 0.008, light.colour, "light %v", &light.pos);
                 }
 
-                SDL_UpdateWindowSurface(g_window);
+                SDL_UpdateWindowSurface(window);
 
-                memset(g_framebuffer, 0x21, g_window_width*g_window_height*sizeof(uint32_t));
+                clear_screen(0x21);
                 i += 0.005;
 
                 ++frames_drawn;
