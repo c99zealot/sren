@@ -1,5 +1,6 @@
 // @TODO start using a Scene object to organise everything instead of just rendering it separately
-// @TODO phong lighting w/ normal maps
+// @TODO phong lighting
+// @TODO normal mapping
 // @TODO serious OBJ parser
 // @TODO make matrices structs so we can use =
 // @TODO kerning
@@ -7,8 +8,11 @@
 // @TODO view frustum, proper perspective transform
 // @TODO logging
 // @TODO dev console
+// @TODO alpha-blended textures
 // @TODO? register an arena for SRen to allocate things in implicitly, models, textures, etc.
-// @TODO give shadow maps their own viewport transforms
+//              - probably better to have it init its own arena in init_renderer
+//              - Renderer object
+// @TODO cleaner fontset handling (probably just have init_renderer load it)
 
 #include <math.h>
 #include <stdio.h>
@@ -31,18 +35,8 @@
                 (double)(clock() - start) / CLOCKS_PER_SEC * 1000); \
 }
 
-const int g_window_width = 1000;
-const int g_window_height = 1000;
-
-//
-// out_of_view - checks whether a point resides outside of the screen
-//
-static int out_of_view(Vec3 v) {
-        return (v.x > g_window_width/2 - 1) ||
-               (v.x < -g_window_width/2) ||
-               (v.y > g_window_height/2 - 1) ||
-               (v.y < -g_window_height/2);
-}
+const int g_window_width = 800;
+const int g_window_height = 600;
 
 //
 // render_axes - renders portions of the xyz axes to the framebuffer
@@ -71,9 +65,9 @@ void render_axes(Camera *cam) {
                 return;
         }
 
-        line(o, x, VEC3(1, 0, 0));
-        line(o, y, VEC3(0, 1, 0));
-        line(o, z, VEC3(0, 0, 1));
+        line(o, x, VEC4(1, 0, 0, 1));
+        line(o, y, VEC4(0, 1, 0, 1));
+        line(o, z, VEC4(0, 0, 1, 1));
 }
 
 int main(int argc, char **argv) {
@@ -109,14 +103,16 @@ int main(int argc, char **argv) {
         Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, 1024, 1024, 0, 0);
         Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, 1024, 1024, 0, 0);
         //Scene *scene = mkscene(&render_arena);
+        
+        Texture *fontset = load_texture(&render_arena, "assets/fontset.tex", 7392, 128);
  
         Light light = {
-                .colour = VEC3(1.0, 1.0, 1.0),
+                .colour = VEC4(1.0, 1.0, 1.0, 1.0),
                 .subject = VEC3(0, 0, 0),
                 .intensity = 1.0,
                 .up = VEC3(0, 1, 0),
-                .shadow_map = mk_smap(&render_arena, g_window_width, g_window_height),
         };
+        init_light(&render_arena, &light, 800, 800);
 
         Camera cam = {
                 .pos = VEC3(0, 0, 2),
@@ -174,7 +170,13 @@ int main(int argc, char **argv) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                 }
 
-                move_light_to(&light, VEC3(1.5*sin(i), 1, 1.5*cos(i)));
+                move_light_to(&light, VEC3(sin(i), 1.5, cos(i)));
+                light.colour = VEC4(
+                        0.8f + 0.2*sin(8*i),
+                        0.8f + 0.2*sin(8*i + 2.094),
+                        0.8f + 0.2*sin(8*i + 4.188),
+                        1.0
+                );
 
                 double cx = cos(-curs_dx);
                 double cy = cos(-curs_dy);
@@ -189,10 +191,10 @@ int main(int argc, char **argv) {
 
                 move_cam(&cam, cam_rot, cam_vel);
 
+                clock_t start = clock();
+
                 // @TODO same thing as the shadow mapping - handle implicitly
                 reset_dbuf();
-
-                clock_t start = clock();
 
                 if (frames_drawn % 2) {
                         // @TODO this is a bit low-level for shadow map handling, tie it to moving the light source and organise everything in a Scene so it can be re-rendered to the shadow map
@@ -203,6 +205,7 @@ int main(int argc, char **argv) {
 
                 render_model(floor_model, &cam, &light);
                 render_model(main_model, &cam, &light);
+                render_axes(&cam);
 
                 if ((frames_drawn % 64) == 0) {
                         frame_time = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
@@ -213,14 +216,12 @@ int main(int argc, char **argv) {
                         frame_time_low = frame_time < frame_time_low ? frame_time : frame_time_low;
                 }
 
-                render_axes(&cam);
-
                 time_t rawtime;
                 time(&rawtime);
                 struct tm *timeinfo = localtime(&rawtime);
 
                 render_text(
-                        VEC3(-0.95, 0.95, 0), 0.012, VEC3(0, 1, 0),
+                        VEC3(-0.95, 0.9, 0), VEC4(0, 1, 0, 0.4), 0.14, fontset,
 
                         "-SRen-\n\n"
 
@@ -230,6 +231,7 @@ int main(int argc, char **argv) {
                         "%d frames drawn\n"
                         "main model: \"%s\" (%d faces)\n"
                         "texture: \"%s\" (%dx%d)\n"
+                        "mem: %f MiB\n"
                         "camera @ %v\n",
 
                         asctime(timeinfo),
@@ -239,15 +241,16 @@ int main(int argc, char **argv) {
                         frames_drawn,
                         argv[1], main_model->obj->face_count,
                         argv[2], main_model->texture->width, main_model->texture->height,
+                        (double)arena_get_usage(&render_arena)/(1024*1024),
                         &cam.pos
                 );
 
                 Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
                 Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
 
-                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) < light_pos_screen.z) {
+                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) < -1.0/light_pos_screen.z) {
                         point(light_pos_screen.x, light_pos_screen.y, light.colour);
-                        render_text(light_pos_proj, 0.008, light.colour, "light %v", &light.pos);
+                        render_text(light_pos_proj, light.colour, 0.1, fontset, "light %v", &light.pos);
                 }
 
                 SDL_UpdateWindowSurface(window);

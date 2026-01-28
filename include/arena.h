@@ -19,4 +19,5 @@
         extern void arena_clear(Arena *arena);
         extern void arena_commit_at(Arena *arena, void *ptr, size_t nobjs);
         extern void arena_debump(Arena *arena, size_t nobjs);
+        extern size_t arena_get_usage(Arena *arena);
 #endif

@@ -9,7 +9,7 @@
         #include <math.h>
 
         #define VEC3(x, y, z) ((Vec3){(x), (y), (z)})
-        #define VEC4(x, y, z) ((Vec4){(x), (y), (z), (w)})
+        #define VEC4(x, y, z, w) ((Vec4){(x), (y), (z), (w)})
 
         #define MIN(x, y) ((x) < (y) ? (x) : (y))
         #define MAX(x, y) ((x) > (y) ? (x) : (y))
@@ -56,9 +56,13 @@
         } Texture;
 
         typedef struct {
+                double *data;
                 size_t width;
                 size_t height;
-                double *data;
+                int max_x;
+                int max_y;
+                int min_x;
+                int min_y;
         } Shadow_Map;
 
         typedef struct {
@@ -77,10 +81,11 @@
                 Vec3 pos;
                 Vec3 subject;
                 Vec3 up;
-                Vec3 colour;
+                Vec4 colour;
                 double intensity;
                 Shadow_Map *shadow_map;
                 Mat4 view_mat;
+                Mat4 viewport;
         } Light;
 
         typedef struct {
@@ -325,6 +330,20 @@
         }
 
         //
+        // vec4_mul - computes the Hadamard product of two 4D vectors
+        //
+        static inline Vec4 vec4_mul(Vec4 v0, Vec4 v1) {
+                return VEC4(v0.x*v1.x, v0.y*v1.y, v0.z*v1.z, v0.w*v1.w);
+        }
+
+        //
+        // vec3_mul - computes the Hadamard product of two 3D vectors
+        //
+        static inline Vec3 vec3_mul(Vec3 v0, Vec3 v1) {
+                return VEC3(v0.x*v1.x, v0.y*v1.y, v0.z*v1.z);
+        }
+
+        //
         // vec3_dot - computes the dot product of two 3D vectors
         //
         static inline double vec3_dot(Vec3 v0, Vec3 v1) {
@@ -382,6 +401,45 @@
         }
 
         //
+        // vec4_add - adds two 4D vectors
+        //
+        static inline Vec4 vec4_add(Vec4 v0, Vec4 v1) {
+                return (Vec4){v0.x + v1.x, v0.y + v1.y, v0.z + v1.z, v0.w + v1.w};
+        }
+
+        //
+        // Vec4_scale - scales a 3D vector v by a scalar s
+        //
+        static inline Vec4 vec4_scale(Vec4 v, double s) {
+                return (Vec4){s*v.x, s*v.y, s*v.z, s*v.w};
+        }
+
+        //
+        // xrgb_to_vec4 - converts an XRGB8888 value to a Vec4
+        //
+        static inline Vec4 xrgb_to_vec4(uint32_t xrgb) {
+                uint8_t r = ((uint8_t*)&xrgb)[2];
+                uint8_t g = ((uint8_t*)&xrgb)[1];
+                uint8_t b = ((uint8_t*)&xrgb)[0];
+
+                return vec4_scale(VEC4(r, g, b, 1), 1.0/255);
+        }
+
+        //
+        // xrgb_to_vec4 - converts a Vec4 to an XRGB8888 value
+        //
+        static inline uint32_t vec4_to_xrgb(Vec4 xrgb) {
+                uint32_t result;
+                uint8_t *p = (uint8_t*)&result;
+
+                p[2] = (uint8_t)(xrgb.x*255);
+                p[1] = (uint8_t)(xrgb.y*255);
+                p[0] = (uint8_t)(xrgb.z*255);
+
+                return result;
+        }
+
+        //
         // persp - basic perspective projection
         //
         static inline Vec3 persp(Vec3 v) {
@@ -390,7 +448,7 @@
         }
 
         //
-        // init_cam - initialises a Camera, preparing it for use
+        // init_cam - initialises a Camera
         //
         static inline void init_cam(Camera *cam) {
                 cam->n = unit(vec3_sub(cam->pos, cam->subject));
@@ -469,17 +527,21 @@
         }
 
         extern void clear_screen(char c);
-        extern void point(int x, int y, Vec3 colour);
+        extern void point(int x, int y, Vec4 colour);
         extern void init_renderer(Arena *arena, uint32_t *framebuffer, size_t fb_width, size_t fb_height);
-        extern void line(Vec3 a, Vec3 b, Vec3 colour);
+        extern void line(Vec3 a, Vec3 b, Vec4 colour);
         extern void render_model(Model *model, Camera *cam, Light *light);
         extern double dbuf_read(int x, int y);
         extern void reset_dbuf(void);
-        extern Vec3 render_text(Vec3 pos, double unit, Vec3 colour, const char *fmt, ...);
-        extern Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h);
+        extern Vec3 render_text(Vec3 pos, Vec4 colour, double scale, Texture *fontset, const char *fmt, ...);
+        extern void render_image_fragment(Vec3 pos, Vec4 colour, Texture *texture, Vec3 uv, double frag_w, double frag_h, double scale);
+        extern Vec3 render_glyph(Vec3 pos, Vec4 colour, double scale, Texture *fontset, char c);
+        extern void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_height);
+        extern int out_of_view(Vec3 v);
         extern double smap_read(Shadow_Map *shadow_map, int x, int y);
         extern void render_model_smap(Model *model, Light *light);
         extern void reset_smap(Shadow_Map *smap);
+        extern Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h);
         extern Model *load_model(
                 Arena *arena,
                 char *obj_filename,

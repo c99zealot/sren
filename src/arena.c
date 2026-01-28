@@ -1,6 +1,4 @@
 // @TODO make this work with LeakSanitizer
-// @TODO add option to make arena work with some arena_push function which writes an object to the unused
-//       index and commits more memory if required, like a dynamic array
 
 #include <stdint.h>
 #include <string.h>
@@ -146,4 +144,11 @@ void arena_debump(Arena *arena, size_t nobjs) {
 #ifdef ASAN
         __asan_poison_memory_region((uint8_t*)arena->base + arena->unused, nobjs * arena->alignment);
 #endif
+}
+
+//
+// arena_get_usage - returns the number of bytes allocated in an Arena by arena_alloc
+//
+size_t arena_get_usage(Arena *arena) {
+        return arena->unused;
 }
