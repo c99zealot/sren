@@ -8,7 +8,6 @@
 // @TODO view frustum, proper perspective transform
 // @TODO logging
 // @TODO dev console
-// @TODO alpha-blended textures
 // @TODO? register an arena for SRen to allocate things in implicitly, models, textures, etc.
 //              - probably better to have it init its own arena in init_renderer
 //              - Renderer object
@@ -36,7 +35,7 @@
 }
 
 const int g_window_width = 800;
-const int g_window_height = 600;
+const int g_window_height = 800;
 
 //
 // render_axes - renders portions of the xyz axes to the framebuffer
@@ -102,7 +101,18 @@ int main(int argc, char **argv) {
 
         Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, 1024, 1024, 0, 0);
         Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, 1024, 1024, 0, 0);
+        Model *ceiling_model = load_model(&render_arena, "assets/ceiling.obj", "assets/chainlink.tex", NULL, 1024, 1024, 0, 0);
         //Scene *scene = mkscene(&render_arena);
+
+        // @TODO @HACK actually change the texture file and remove this
+#if 1
+        for (int i = 0; i < ceiling_model->texture->width*ceiling_model->texture->height*4; i += 4) {
+                uint8_t *p = &ceiling_model->texture->data[i];
+                if (p[0] == 0 && p[1] == 0 && p[2] == 0) {
+                        p[3] = 0;
+                }
+        }
+#endif
         
         Texture *fontset = load_texture(&render_arena, "assets/fontset.tex", 7392, 128);
  
@@ -115,8 +125,8 @@ int main(int argc, char **argv) {
         init_light(&render_arena, &light, 800, 800);
 
         Camera cam = {
-                .pos = VEC3(0, 0, 2),
-                .subject = VEC3(0, 0, 1),
+                .pos = VEC3(0.1, 0.4, 1),
+                .subject = VEC3(0, 0, 0),
                 .up = VEC3(0, 1, 0)
         };
         init_cam(&cam);
@@ -158,25 +168,27 @@ int main(int argc, char **argv) {
 
                 const uint8_t *keys = SDL_GetKeyboardState(NULL);
 
-                cam_vel.x = keys[SDL_SCANCODE_A] * -0.02;
-                cam_vel.y = keys[SDL_SCANCODE_LCTRL] * -0.02;
-                cam_vel.z = keys[SDL_SCANCODE_W] * -0.02;
+                cam_vel.x = keys[SDL_SCANCODE_A] * -0.04;
+                cam_vel.y = keys[SDL_SCANCODE_LCTRL] * -0.04;
+                cam_vel.z = keys[SDL_SCANCODE_W] * -0.04;
 
-                cam_vel.x += keys[SDL_SCANCODE_D] * 0.02;
-                cam_vel.y += keys[SDL_SCANCODE_LSHIFT] * 0.02;
-                cam_vel.z += keys[SDL_SCANCODE_S] * 0.02;
+                cam_vel.x += keys[SDL_SCANCODE_D] * 0.04;
+                cam_vel.y += keys[SDL_SCANCODE_LSHIFT] * 0.04;
+                cam_vel.z += keys[SDL_SCANCODE_S] * 0.04;
 
                 if (keys[SDL_SCANCODE_ESCAPE]) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                 }
 
                 move_light_to(&light, VEC3(sin(i), 1.5, cos(i)));
+#if 0
                 light.colour = VEC4(
                         0.8f + 0.2*sin(8*i),
                         0.8f + 0.2*sin(8*i + 2.094),
                         0.8f + 0.2*sin(8*i + 4.188),
                         1.0
                 );
+#endif
 
                 double cx = cos(-curs_dx);
                 double cy = cos(-curs_dy);
@@ -188,10 +200,11 @@ int main(int argc, char **argv) {
                         sy*sx,  cy, -sy*cx,
                         -cy*sx, sy,  cy*cx
                 };
-
                 move_cam(&cam, cam_rot, cam_vel);
 
                 clock_t start = clock();
+
+                clear_screen(0x80);
 
                 // @TODO same thing as the shadow mapping - handle implicitly
                 reset_dbuf();
@@ -201,10 +214,12 @@ int main(int argc, char **argv) {
                         reset_smap(light.shadow_map);
                         render_model_smap(floor_model, &light);
                         render_model_smap(main_model, &light);
+                        render_model_smap(ceiling_model, &light);
                 }
 
                 render_model(floor_model, &cam, &light);
                 render_model(main_model, &cam, &light);
+                render_model(ceiling_model, &cam, &light);
                 render_axes(&cam);
 
                 if ((frames_drawn % 64) == 0) {
@@ -214,6 +229,14 @@ int main(int argc, char **argv) {
                         fps_low = fps < fps_low ? fps : fps_low;
                         frame_time_high = frame_time > frame_time_high ? frame_time : frame_time_high;
                         frame_time_low = frame_time < frame_time_low ? frame_time : frame_time_low;
+                }
+
+                Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
+                Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
+
+                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) < -1.0/light_pos_screen.z) {
+                        point(light_pos_screen.x, light_pos_screen.y, light.colour);
+                        render_text(light_pos_proj, light.colour, 0.1, fontset, "light %v", &light.pos);
                 }
 
                 time_t rawtime;
@@ -245,17 +268,8 @@ int main(int argc, char **argv) {
                         &cam.pos
                 );
 
-                Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
-                Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
-
-                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) < -1.0/light_pos_screen.z) {
-                        point(light_pos_screen.x, light_pos_screen.y, light.colour);
-                        render_text(light_pos_proj, light.colour, 0.1, fontset, "light %v", &light.pos);
-                }
-
                 SDL_UpdateWindowSurface(window);
 
-                clear_screen(0x21);
                 i += 0.005;
 
                 ++frames_drawn;

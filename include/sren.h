@@ -526,6 +526,7 @@
                 memcpy(light->view_mat, view, sizeof(Mat4));
         }
 
+
         extern void clear_screen(char c);
         extern void point(int x, int y, Vec4 colour);
         extern void init_renderer(Arena *arena, uint32_t *framebuffer, size_t fb_width, size_t fb_height);

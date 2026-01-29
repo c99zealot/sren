@@ -68,24 +68,40 @@ static inline double signed_tri_area2(Vec3 a, Vec3 b, Vec3 c) {
         return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x);
 }
 
+// @XXX render_face_smap needs this, remove when things are better organised
+static inline Vec4 sample_texture(Texture *texture, double x, double y);
+
 //
 // render_face_smap - renders a single face in a model to a shadow map
 //
 static void render_face_smap(Face *f, Model *model, Light *light) {
         Vec3 *v = model->obj->vertices;
+        Vec3 *vt = model->obj->uvs;
 
-        Vec3 a = persp(m4v3_mul(light->view_mat, v[f->v0[VERTEX]]));
-        Vec3 b = persp(m4v3_mul(light->view_mat, v[f->v1[VERTEX]]));
-        Vec3 c = persp(m4v3_mul(light->view_mat, v[f->v2[VERTEX]]));
+        Vec3 a = m4v3_mul(light->view_mat, v[f->v0[VERTEX]]);
+        Vec3 b = m4v3_mul(light->view_mat, v[f->v1[VERTEX]]);
+        Vec3 c = m4v3_mul(light->view_mat, v[f->v2[VERTEX]]);
 
         if (a.z > 0 || b.z > 0 || c.z > 0) {
                 return;
         }
 
+        a = persp(a);
+        b = persp(b);
+        c = persp(c);
+
         Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
         if (face_norm.z <= 0) {
                 return;
         }
+
+        double a_recip_z = 1.0/a.z;
+        double b_recip_z = 1.0/b.z;
+        double c_recip_z = 1.0/c.z;
+
+        Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
+        Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
+        Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
 
         a = m4v3_mul(light->viewport, a);
         b = m4v3_mul(light->viewport, b);
@@ -123,11 +139,23 @@ static void render_face_smap(Face *f, Model *model, Light *light) {
         double Eb_x0 = Eb;
         double Ec_x0 = Ec;
 
+        #define INTERP(a, b, c)     (recip_area * (Ea*(a) + Eb*(b) + Ec*(c)))
+        #define VEC_INTERP(a, b, c) (vec3_scale(vec3_add(vec3_scale(a, Ea), vec3_add(vec3_scale(b, Eb), \
+                                        vec3_scale(c, Ec))), recip_area))
+
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
                         if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                double depth = recip_area * (Ea*a.z + Eb*b.z + Ec*c.z);
-                                if (depth > smap_read(light->shadow_map, x, y)) {
+                                // @TODO more sophisticated alpha handling, thinking about a separate map which colours
+                                //       the shadow, then opacity influences how strongly the texture colour colours
+                                //       the shadow
+
+                                double interp_recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
+                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/interp_recip_z);
+                                Vec4 texel = sample_texture(model->texture, uv.x, uv.y);
+
+                                double depth = INTERP(a.z, b.z, c.z);
+                                if (texel.w == 1.0 && depth > smap_read(light->shadow_map, x, y)) {
                                         smap_write(light->shadow_map, x, y, depth);
                                 }
                         }
@@ -141,6 +169,9 @@ static void render_face_smap(Face *f, Model *model, Light *light) {
                 Eb = Eb_x0 -= Bb;
                 Ec = Ec_x0 -= Bc;
         }
+
+        #undef INTERP
+        #undef VEC_INTERP
 }
 
 //
@@ -229,6 +260,8 @@ void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_heigh
         light->viewport[1][1] = smap_height/2 - 1;
         light->viewport[2][2] = 1.0;
         light->viewport[3][3] = 1.0;
+
+        light->colour = vec4_scale(light->colour, light->intensity);
 }
 
 //
@@ -288,7 +321,7 @@ void line(Vec3 a, Vec3 b, Vec4 colour) {
 //
 // sample texture - samples a texture at (x, y)
 //
-static inline Vec4 sample_texture_rgba(Texture *texture, double x, double y) {
+static inline Vec4 sample_texture(Texture *texture, double x, double y) {
         size_t u = x*(texture->width - 1);
         size_t v = (1.0 - y)*(texture->height - 1);
 
@@ -302,32 +335,6 @@ static inline Vec4 sample_texture_rgba(Texture *texture, double x, double y) {
         };
 
         return vec4_scale(result, 1.0/255);
-}
-
-//
-// sample texture - samples a texture at (x, y)
-//
-static inline Vec3 sample_texture(Texture *texture, double x, double y) {
-        size_t u = x*(texture->width - 1);
-        size_t v = (1.0 - y)*(texture->height - 1);
-
-        size_t i = v*texture->width + u;
-
-        double one_255th = 1.0/255;
-
-        return (Vec3){
-                .x = (double)texture->data[i * 3*sizeof(uint8_t)]     * one_255th,
-                .y = (double)texture->data[i * 3*sizeof(uint8_t) + 1] * one_255th,
-                .z = (double)texture->data[i * 3*sizeof(uint8_t) + 2] * one_255th
-        };
-}
-
-//
-// attenuate - attenuates a light value based on a given distance
-//
-static inline double attenuate(double intensity, double dist) {
-        intensity = intensity < 0 ? 0 : intensity/dist;
-        return intensity > 1 ? 1 : intensity;
 }
 
 //
@@ -373,11 +380,11 @@ void render_image_fragment(Vec3 pos, Vec4 colour, Texture *texture, Vec3 uv, dou
                         size_t target_x = round(pos.x + x*target_w);
                         size_t target_y = round(pos.y + y*target_h);
 
+                        Vec4 texel = vec4_mul(sample_texture(texture, uv.x + x*frag_w, uv.y + y*frag_h), colour);
+
+                        // @TODO cleaner way of reading the framebuffer [either get_pixel() or blend_point()]
                         uint32_t *target = &g_framebuffer[SCREEN(target_x, target_y)];
-
-                        Vec4 texel = vec4_mul(sample_texture_rgba(texture, uv.x + x*frag_w, uv.y + y*frag_h), colour);
                         Vec4 pixel = xrgb_to_vec4(*target);
-
                         *target = vec4_to_xrgb(alpha_blend(texel, pixel));
                 }
         }
@@ -400,6 +407,14 @@ Vec3 render_glyph(Vec3 pos, Vec4 colour, double scale, Texture *fontset, char c)
 
         pos.x += (77.0 * scale)/g_max_x;
         return pos;
+}
+
+//
+// attenuate - attenuates a light value based on a given distance
+//
+static inline double attenuate(double intensity, double dist) {
+        intensity = intensity < 0 ? 0 : intensity/dist;
+        return intensity > 1 ? 1 : intensity;
 }
 
 //
@@ -529,12 +544,17 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
                                         intensity = attenuate(vec3_dot(interp_norm_proj, unit(interp_to_light_proj)), vec3_norm(interp_to_light_proj));
                                 }
 
-                                // @TODO this is hacky until we do alpha blending
-                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/interp_recip_z);
-                                Vec3 colour = vec3_mul(sample_texture(model->texture, uv.x, uv.y), VEC3(light->colour.x, light->colour.y, light->colour.z));
-                                colour = vec3_scale(colour, intensity);
+                                uint32_t *target = &g_framebuffer[SCREEN(x, y)];
+                                Vec4 pixel = xrgb_to_vec4(*target);
 
-                                point(x, y, VEC4(colour.x, colour.y, colour.z, 1.0));
+                                // @XXX this is hacky
+                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/interp_recip_z);
+                                Vec4 lit_colour = sample_texture(model->texture, uv.x, uv.y);
+                                lit_colour = vec4_scale(vec4_mul(lit_colour, light->colour), intensity);
+                                lit_colour.w /= intensity;
+                                lit_colour = alpha_blend(lit_colour, pixel);
+
+                                point(x, y, lit_colour);
                                 dbuf_write(x, y, depth);
                         }
 

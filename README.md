@@ -1,4 +1,4 @@
 # Sren (Software RENderer)
 
 ## Current state demo
-![current state demo gif](demos/demo8.gif)
+![current state demo gif](demos/demo9.gif)
