@@ -1,9 +1,14 @@
+// @TODO do calculations in fixed-point when rasterising, precision errors are causing smearing in large faces.
+//       rendering models in order of descending distance from the camera seems to fix this for now.
+// @TODO specular highlights aren't quite correct but this might be fixed when shadow acne is fixed properly
+
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #include "sren.h"
 #include "arena.h"
@@ -139,9 +144,9 @@ static void render_face_smap(Face *f, Model *model, Light *light) {
         double Eb_x0 = Eb;
         double Ec_x0 = Ec;
 
-        #define INTERP(a, b, c)     (recip_area * (Ea*(a) + Eb*(b) + Ec*(c)))
-        #define VEC_INTERP(a, b, c) (vec3_scale(vec3_add(vec3_scale(a, Ea), vec3_add(vec3_scale(b, Eb), \
-                                        vec3_scale(c, Ec))), recip_area))
+        #define INTERP(r, s, t)     (recip_area * (Ea*(r) + Eb*(s) + Ec*(t)))
+        #define VEC_INTERP(r, s, t) (vec3_scale(vec3_add(vec3_scale(r, Ea), vec3_add(vec3_scale(s, Eb), \
+                                        vec3_scale(t, Ec))), recip_area))
 
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
@@ -155,7 +160,7 @@ static void render_face_smap(Face *f, Model *model, Light *light) {
                                 Vec4 texel = sample_texture(model->texture, uv.x, uv.y);
 
                                 double depth = INTERP(a.z, b.z, c.z);
-                                if (texel.w == 1.0 && depth > smap_read(light->shadow_map, x, y)) {
+                                if (texel.w > 0.5 && depth > smap_read(light->shadow_map, x, y)) {
                                         smap_write(light->shadow_map, x, y, depth);
                                 }
                         }
@@ -219,9 +224,7 @@ double dbuf_read(int x, int y) {
 // reset_dbuf - resets the depth buffer to the maximum depth value
 //
 void reset_dbuf(void) {
-        for (int i = 0; i < g_fb_width*g_fb_height; ++i) {
-                g_depthbuffer[i] = -1024.0;
-        }
+        memset(g_depthbuffer, 0, g_fb_width*g_fb_height*sizeof(double));
 }
 
 /*
@@ -260,8 +263,6 @@ void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_heigh
         light->viewport[1][1] = smap_height/2 - 1;
         light->viewport[2][2] = 1.0;
         light->viewport[3][3] = 1.0;
-
-        light->colour = vec4_scale(light->colour, light->intensity);
 }
 
 //
@@ -269,6 +270,13 @@ void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_heigh
 //
 void point(int x, int y, Vec4 colour) {
         g_framebuffer[SCREEN(x, y)] = RGBf(colour.x, colour.y, colour.z);
+}
+
+//
+// get_pixel - reads an RGBA value from the frame buffer and returns it as a Vec4
+//
+Vec4 get_pixel(int x, int y) {
+        return xrgb_to_vec4(g_framebuffer[SCREEN(x, y)]);
 }
 
 //
@@ -381,11 +389,9 @@ void render_image_fragment(Vec3 pos, Vec4 colour, Texture *texture, Vec3 uv, dou
                         size_t target_y = round(pos.y + y*target_h);
 
                         Vec4 texel = vec4_mul(sample_texture(texture, uv.x + x*frag_w, uv.y + y*frag_h), colour);
+                        Vec4 pixel = get_pixel(target_x, target_y);
 
-                        // @TODO cleaner way of reading the framebuffer [either get_pixel() or blend_point()]
-                        uint32_t *target = &g_framebuffer[SCREEN(target_x, target_y)];
-                        Vec4 pixel = xrgb_to_vec4(*target);
-                        *target = vec4_to_xrgb(alpha_blend(texel, pixel));
+                        point(target_x, target_y, alpha_blend(texel, pixel));
                 }
         }
 }
@@ -410,11 +416,22 @@ Vec3 render_glyph(Vec3 pos, Vec4 colour, double scale, Texture *fontset, char c)
 }
 
 //
-// attenuate - attenuates a light value based on a given distance
+// vec4_clamp - clamps a 4D vector's components to (-inf, 1]
 //
-static inline double attenuate(double intensity, double dist) {
-        intensity = intensity < 0 ? 0 : intensity/dist;
-        return intensity > 1 ? 1 : intensity;
+static inline Vec4 vec4_clamp(Vec4 v) {
+        v.x = MIN(1, v.x);
+        v.y = MIN(1, v.y);
+        v.z = MIN(1, v.z);
+        v.w = MIN(1, v.w);
+
+        return v;
+}
+
+//
+// reflect - reflects a unit vector about another unit vector b
+//
+static inline Vec3 reflect(Vec3 a, Vec3 b) {
+        return vec3_sub(vec3_scale(a, 2*vec3_dot(a, b)), b);
 }
 
 //
@@ -423,7 +440,9 @@ static inline double attenuate(double intensity, double dist) {
 static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 *v = model->obj->vertices;
         Vec3 *vt = model->obj->uvs;
-        Vec3 *vn = model->obj->norms;
+        Vec3 *vn = model->obj->normals;
+
+        Material *mat = model->material;
 
         Vec3 a = v[f->v0[VERTEX]];
         Vec3 b = v[f->v1[VERTEX]];
@@ -432,7 +451,7 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 a_lightview = m4v3_mul(light->view_mat, a);
         Vec3 b_lightview = m4v3_mul(light->view_mat, b);
         Vec3 c_lightview = m4v3_mul(light->view_mat, c);
-
+        
         a = m4v3_mul(cam->view_mat, a);
         b = m4v3_mul(cam->view_mat, b);
         c = m4v3_mul(cam->view_mat, c);
@@ -446,6 +465,14 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 b_to_light = vec3_sub(light_camview, b);
         Vec3 c_to_light = vec3_sub(light_camview, c);
 
+        double a_recip_z = 1.0/a.z;
+        double b_recip_z = 1.0/b.z;
+        double c_recip_z = 1.0/c.z;
+
+        Vec3 a_to_cam = vec3_scale(a, -a_recip_z);
+        Vec3 b_to_cam = vec3_scale(b, -b_recip_z);
+        Vec3 c_to_cam = vec3_scale(c, -c_recip_z);
+
         a = persp(a);
         b = persp(b);
         c = persp(c);
@@ -455,29 +482,23 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
                 return;
         }
 
-        double a_recip_z = 1.0/a.z;
-        double b_recip_z = 1.0/b.z;
-        double c_recip_z = 1.0/c.z;
+        bool facing_light = cross(vec3_sub(b_lightview, a_lightview), vec3_sub(c_lightview, a_lightview)).z > 0;
 
         Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
         Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
         Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
 
-        Vec3 na = m4v3_mul(cam->inv_tr, vn[f->v0[NORM]]);
-        Vec3 nb = m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]);
-        Vec3 nc = m4v3_mul(cam->inv_tr, vn[f->v2[NORM]]);
+        Vec3 na = vec3_scale(m4v3_mul(cam->inv_tr, vn[f->v0[NORM]]), a_recip_z);
+        Vec3 nb = vec3_scale(m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]), b_recip_z);
+        Vec3 nc = vec3_scale(m4v3_mul(cam->inv_tr, vn[f->v2[NORM]]), c_recip_z);
 
-        Vec3 na_proj = vec3_scale(na, a_recip_z);
-        Vec3 nb_proj = vec3_scale(nb, b_recip_z);
-        Vec3 nc_proj = vec3_scale(nc, c_recip_z);
+        a_to_light = vec3_scale(a_to_light, a_recip_z);
+        b_to_light = vec3_scale(b_to_light, b_recip_z);
+        c_to_light = vec3_scale(c_to_light, c_recip_z);
 
-        Vec3 a_to_light_proj = vec3_scale(a_to_light, a_recip_z);
-        Vec3 b_to_light_proj = vec3_scale(b_to_light, b_recip_z);
-        Vec3 c_to_light_proj = vec3_scale(c_to_light, c_recip_z);
-
-        Vec3 a_lightview_proj = vec3_scale(a_lightview, a_recip_z);
-        Vec3 b_lightview_proj = vec3_scale(b_lightview, b_recip_z);
-        Vec3 c_lightview_proj = vec3_scale(c_lightview, c_recip_z);
+        a_lightview = vec3_scale(a_lightview, a_recip_z);
+        b_lightview = vec3_scale(b_lightview, b_recip_z);
+        c_lightview = vec3_scale(c_lightview, c_recip_z);
 
         a = m4v3_mul(g_viewport, a);
         b = m4v3_mul(g_viewport, b);
@@ -515,47 +536,62 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         double Eb_x0 = Eb;
         double Ec_x0 = Ec;
 
-        #define INTERP(a, b, c)     (recip_area * (Ea*(a) + Eb*(b) + Ec*(c)))
-        #define VEC_INTERP(a, b, c) (vec3_scale(vec3_add(vec3_scale(a, Ea), vec3_add(vec3_scale(b, Eb), \
-                                        vec3_scale(c, Ec))), recip_area))
+        #define INTERP(r, s, t)     (recip_area * (Ea*(r) + Eb*(s) + Ec*(t)))
+        #define VEC_INTERP(r, s, t) (vec3_scale(vec3_add(vec3_scale(r, Ea), vec3_add(vec3_scale(s, Eb), \
+                                        vec3_scale(t, Ec))), recip_area))
+
+        double ambient = light->ambient * mat->ambient; // @TODO base on up vector
+        double LdKd = light->diffuse * mat->diffuse;
+        double LsKs = light->specular * mat->specular;
 
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
                         if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                double interp_recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
-
-                                double depth = -interp_recip_z;
-                                if (depth <= dbuf_read(x, y)) {
+                                double recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
+                                if (recip_z > dbuf_read(x, y)) {
                                         continue;
                                 }
 
-                                Vec3 interp_lightview_proj = VEC_INTERP(a_lightview_proj, b_lightview_proj, c_lightview_proj);
-                                interp_lightview_proj = vec3_scale(interp_lightview_proj, 1.0/interp_recip_z);
-                                interp_lightview_proj = m4v3_mul(light->viewport, persp(interp_lightview_proj));
+                                Vec3 lightview = VEC_INTERP(a_lightview, b_lightview, c_lightview);
+                                lightview = vec3_scale(lightview, 1.0/recip_z);
+                                lightview = m4v3_mul(light->viewport, persp(lightview));
 
-                                Vec3 interp_norm_proj = VEC_INTERP(na_proj, nb_proj, nc_proj);
-                                interp_norm_proj = vec3_scale(interp_norm_proj, 1.0/interp_recip_z);
+                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/recip_z);
+                                Vec4 lit_colour = vec4_mul(sample_texture(model->texture, uv.x, uv.y), light->colour);
 
-                                Vec3 interp_to_light_proj = VEC_INTERP(a_to_light_proj, b_to_light_proj, c_to_light_proj);
-                                interp_to_light_proj = vec3_scale(interp_to_light_proj, 1.0/interp_recip_z);
+                                Vec4 pixel = get_pixel(x, y);
 
-                                double intensity = 0.1;
-                                if (smap_read(light->shadow_map, interp_lightview_proj.x, interp_lightview_proj.y) <= interp_lightview_proj.z + 0.05) {
-                                        intensity = attenuate(vec3_dot(interp_norm_proj, unit(interp_to_light_proj)), vec3_norm(interp_to_light_proj));
+                                if (smap_read(light->shadow_map, lightview.x, lightview.y) <= lightview.z + 0.05) {
+                                        Vec3 norm = VEC_INTERP(na, nb, nc);
+                                        norm = unit(vec3_scale(norm, 1.0/recip_z));
+
+                                        Vec3 to_light = VEC_INTERP(a_to_light, b_to_light, c_to_light);
+                                        to_light = vec3_scale(to_light, 1.0/recip_z);
+
+                                        Vec3 to_cam = VEC_INTERP(a_to_cam, b_to_cam, c_to_cam);
+                                        to_cam = vec3_scale(to_cam, 1.0/recip_z);
+
+                                        Vec3 light_dir = unit(to_light);
+                                        Vec3 cam_dir = unit(to_cam);
+
+                                        double dist = vec3_norm(to_light);
+                                        double atten = 1.0/(1.0 + light->dropoff*dist*dist);
+
+                                        double diffuse = atten * LdKd * MAX(0, vec3_dot(norm, light_dir));
+                                        double specular = facing_light ? atten * LsKs * pow(vec3_dot(reflect(cam_dir, light_dir), norm), mat->shininess) : 0; // @TODO LUT for powers
+
+                                        double old_alpha = lit_colour.w;
+                                        lit_colour = vec4_scale(lit_colour, ambient + diffuse);
+                                        lit_colour = vec4_add(lit_colour, vec4_scale(light->colour, specular));
+                                        lit_colour.w = old_alpha;
+
+                                        lit_colour = vec4_clamp(alpha_blend(lit_colour, pixel));
+                                } else {
+                                        lit_colour = vec4_scale(alpha_blend(lit_colour, pixel), ambient);
                                 }
 
-                                uint32_t *target = &g_framebuffer[SCREEN(x, y)];
-                                Vec4 pixel = xrgb_to_vec4(*target);
-
-                                // @XXX this is hacky
-                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/interp_recip_z);
-                                Vec4 lit_colour = sample_texture(model->texture, uv.x, uv.y);
-                                lit_colour = vec4_scale(vec4_mul(lit_colour, light->colour), intensity);
-                                lit_colour.w /= intensity;
-                                lit_colour = alpha_blend(lit_colour, pixel);
-
                                 point(x, y, lit_colour);
-                                dbuf_write(x, y, depth);
+                                dbuf_write(x, y, recip_z);
                         }
 
                         Ea += Aa;
@@ -844,21 +880,21 @@ static Obj *load_obj(Arena *arena, char *filename) {
         }
 
         size_t norm_buf_size = 1 << 12;
-        obj->norms = arena_alloc(arena, norm_buf_size);
+        obj->normals = arena_alloc(arena, norm_buf_size);
 
         i = 0;
         for (; *src == 'v' && src[1] == 'n'; ++i) {
                 src += 2;
                 if (i * sizeof(Vec3) >= norm_buf_size) {
-                        arena_commit_at(arena, obj->norms, norm_buf_size *= 2);
+                        arena_commit_at(arena, obj->normals, norm_buf_size *= 2);
                 }
 
                 SKIP_SPACE;
-                obj->norms[i].x = parse_double(&src);
+                obj->normals[i].x = parse_double(&src);
                 SKIP_SPACE;
-                obj->norms[i].y = parse_double(&src);
+                obj->normals[i].y = parse_double(&src);
                 SKIP_SPACE;
-                obj->norms[i].z = parse_double(&src);
+                obj->normals[i].z = parse_double(&src);
                 SKIP_SPACE;
         }
         obj->norm_count = i;
@@ -939,6 +975,7 @@ Model *load_model(
         char *obj_filename,
         char *tm_filename,
         char *nm_filename,
+        Material *mat,
         size_t tm_w,
         size_t tm_h,
         size_t nm_w,
@@ -949,6 +986,7 @@ Model *load_model(
         model->obj = load_obj(arena, obj_filename);
         model->texture = load_texture(arena, tm_filename, tm_w, tm_h);
         model->norm_map = load_texture(arena, nm_filename, nm_w, nm_h);
+        model->material = (mat == NULL) ? &g_error_mat : mat;
 
         return model;
 }

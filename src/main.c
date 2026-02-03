@@ -1,17 +1,20 @@
 // @TODO start using a Scene object to organise everything instead of just rendering it separately
-// @TODO phong lighting
 // @TODO normal mapping
-// @TODO serious OBJ parser
+// @TODO serious OBJ/MTL parser
 // @TODO make matrices structs so we can use =
-// @TODO kerning
-// @TODO bounds check per-glyph
 // @TODO view frustum, proper perspective transform
 // @TODO logging
 // @TODO dev console
-// @TODO? register an arena for SRen to allocate things in implicitly, models, textures, etc.
-//              - probably better to have it init its own arena in init_renderer
-//              - Renderer object
+// @TODO Renderer object
+// @TODO move arena to sren.c
+// @TODO multiple viewports (for splitscreen etc.)
+// @TODO coloured shadows
+// @TODO PNG textures
+// @TODO screenshot bind
+// @TODO perf
 // @TODO cleaner fontset handling (probably just have init_renderer load it)
+// @TODO specific functions for rendering models with transparent textures,
+//       skip alpha blending when rendering models with opaque textures for performance
 
 #include <math.h>
 #include <stdio.h>
@@ -99,30 +102,25 @@ int main(int argc, char **argv) {
 
         init_renderer(&render_arena, screen->pixels, g_window_width, g_window_height);
 
-        Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, 1024, 1024, 0, 0);
-        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, 1024, 1024, 0, 0);
-        Model *ceiling_model = load_model(&render_arena, "assets/ceiling.obj", "assets/chainlink.tex", NULL, 1024, 1024, 0, 0);
-        //Scene *scene = mkscene(&render_arena);
+        Material plastic = {0.3, 0.5, 0.5, 32};
 
-        // @TODO @HACK actually change the texture file and remove this
-#if 1
-        for (int i = 0; i < ceiling_model->texture->width*ceiling_model->texture->height*4; i += 4) {
-                uint8_t *p = &ceiling_model->texture->data[i];
-                if (p[0] == 0 && p[1] == 0 && p[2] == 0) {
-                        p[3] = 0;
-                }
-        }
-#endif
+        Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, &plastic, 1024, 1024, 0, 0);
+        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, &plastic, 1024, 1024, 0, 0);
+        Model *ceiling_model = load_model(&render_arena, "assets/ceiling.obj", "assets/chainlink.tex", NULL, &plastic, 1024, 1024, 0, 0);
+        //Scene *scene = mkscene(&render_arena);
         
         Texture *fontset = load_texture(&render_arena, "assets/fontset.tex", 7392, 128);
  
         Light light = {
                 .colour = VEC4(1.0, 1.0, 1.0, 1.0),
-                .subject = VEC3(0, 0, 0),
-                .intensity = 1.0,
+                .ambient = 0.2,
+                .diffuse = 1,
+                .specular = 0.7,
+                .dropoff = 0.032,
+                .subject = VEC3(0, -1, 0),
                 .up = VEC3(0, 1, 0),
         };
-        init_light(&render_arena, &light, 800, 800);
+        init_light(&render_arena, &light, 1024, 1024);
 
         Camera cam = {
                 .pos = VEC3(0.1, 0.4, 1),
@@ -180,8 +178,8 @@ int main(int argc, char **argv) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                 }
 
-                move_light_to(&light, VEC3(sin(i), 1.5, cos(i)));
-#if 0
+                move_light_to(&light, VEC3(sin(i), 1.1, cos(i)));
+#if 1
                 light.colour = VEC4(
                         0.8f + 0.2*sin(8*i),
                         0.8f + 0.2*sin(8*i + 2.094),
@@ -204,7 +202,7 @@ int main(int argc, char **argv) {
 
                 clock_t start = clock();
 
-                clear_screen(0x80);
+                clear_screen(0x21);
 
                 // @TODO same thing as the shadow mapping - handle implicitly
                 reset_dbuf();
@@ -234,7 +232,7 @@ int main(int argc, char **argv) {
                 Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
                 Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
 
-                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) < -1.0/light_pos_screen.z) {
+                if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) > 1.0/light_pos_screen.z) {
                         point(light_pos_screen.x, light_pos_screen.y, light.colour);
                         render_text(light_pos_proj, light.colour, 0.1, fontset, "light %v", &light.pos);
                 }
@@ -244,7 +242,7 @@ int main(int argc, char **argv) {
                 struct tm *timeinfo = localtime(&rawtime);
 
                 render_text(
-                        VEC3(-0.95, 0.9, 0), VEC4(0, 1, 0, 0.4), 0.14, fontset,
+                        VEC3(-0.95, 0.9, 0), VEC4(0, 1, 0, 0.4), 0.15, fontset,
 
                         "-SRen-\n\n"
 

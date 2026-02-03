@@ -4,6 +4,7 @@
         #include "sren.h"
 
         extern Obj g_error_obj;
+        extern Material g_error_mat;
         extern Texture g_error_tex;
         extern Texture g_error_nm;
 #endif

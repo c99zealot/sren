@@ -52,13 +52,16 @@
         typedef struct {
                 size_t width;
                 size_t height;
+
                 uint8_t *data;
         } Texture;
 
         typedef struct {
                 double *data;
+
                 size_t width;
                 size_t height;
+
                 int max_x;
                 int max_y;
                 int min_x;
@@ -78,21 +81,31 @@
         } Camera;
 
         typedef struct {
+                Mat4 view_mat;
+                Mat4 viewport;
+
                 Vec3 pos;
                 Vec3 subject;
                 Vec3 up;
+
                 Vec4 colour;
-                double intensity;
+
                 Shadow_Map *shadow_map;
-                Mat4 view_mat;
-                Mat4 viewport;
+
+                double ambient;
+                double diffuse;
+                double specular;
+
+                double dropoff;
         } Light;
 
         typedef struct {
                 Vec3 *vertices;
                 Vec3 *uvs;
-                Vec3 *norms;
+                Vec3 *normals;
+
                 Face *faces;
+
                 size_t vertex_count;
                 size_t uv_count;
                 size_t norm_count;
@@ -100,13 +113,24 @@
         } Obj;
 
         typedef struct {
+                double ambient;
+                double diffuse;
+                double specular;
+                int shininess;
+        } Material;
+
+        typedef struct {
                 Obj *obj;
+
                 Texture *texture;
                 Texture *norm_map;
+
+                Material *material;
         } Model;
 
         typedef struct {
                 Model **models;
+
                 Light **lights;
 
                 size_t model_count;
@@ -548,6 +572,7 @@
                 char *obj_filename,
                 char *tm_filename,
                 char *nm_filename,
+                Material *mat,
                 size_t tm_w,
                 size_t tm_h,
                 size_t nm_w,
