@@ -26,6 +26,8 @@ static int g_max_y;
 
 Mat4 g_viewport; // @XXX exposing this for now...
 
+Arena g_arena;
+
 /*
  * @XXX shadow mapping @XXX
  */
@@ -33,8 +35,8 @@ Mat4 g_viewport; // @XXX exposing this for now...
 //
 // mk_smap - allocates and initialises a Shadow_Map
 //
-static Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h) {
-        Shadow_Map *smap = arena_alloc(arena, sizeof(Shadow_Map));
+static Shadow_Map *mk_smap(size_t w, size_t h) {
+        Shadow_Map *smap = arena_alloc(&g_arena, sizeof(Shadow_Map));
         *smap = (Shadow_Map){
                 .width = w,
                 .height = h,
@@ -42,7 +44,7 @@ static Shadow_Map *mk_smap(Arena *arena, size_t w, size_t h) {
                 .min_y = -h/2,
                 .max_x = w/2 - 1,
                 .max_y = h/2 - 1,
-                .data = arena_alloc(arena, w*h*sizeof(double)*4),
+                .data = arena_alloc(&g_arena, w*h*sizeof(double)*4),
         };
 
         reset_smap(smap);
@@ -233,7 +235,9 @@ void reset_dbuf(void) {
 //
 // init_renderer - initialises internal data for rendering
 //
-void init_renderer(Arena *arena, uint32_t *framebuffer, size_t fb_width, size_t fb_height) {
+void init_renderer(uint32_t *framebuffer, size_t fb_width, size_t fb_height) {
+        arena_init(&g_arena, ARENA_RESERVE_DEFAULT, 1 << 24, 1);
+
         g_fb_width = fb_width;
         g_fb_height = fb_height;
 
@@ -248,14 +252,21 @@ void init_renderer(Arena *arena, uint32_t *framebuffer, size_t fb_width, size_t 
         g_viewport[3][3] = 1.0;
 
         g_framebuffer = framebuffer;
-        g_depthbuffer = arena_alloc(arena, fb_width*fb_height*sizeof(double));
+        g_depthbuffer = arena_alloc(&g_arena, fb_width*fb_height*sizeof(double));
+}
+
+//
+// deinit_renderer - deinitialises a renderer, releasing allocations etc.
+//
+void deinit_renderer(void) {
+        arena_deinit(&g_arena);
 }
 
 //
 // init_light - initialises a Light
 //
-void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_height) {
-        light->shadow_map = mk_smap(arena, smap_width, smap_height);
+void init_light(Light *light, size_t smap_width, size_t smap_height) {
+        light->shadow_map = mk_smap(smap_width, smap_height);
 
         memset(light->viewport, 0, sizeof(Mat4));
         light->viewport[0][0] = (smap_width - 1)/2;
@@ -821,7 +832,7 @@ static int is_space(unsigned c) {
 //
 // load_obj - loads an OBJ file and parses geometry data into vertex arrays etc.
 //
-static Obj *load_obj(Arena *arena, char *filename) {
+static Obj *load_obj(char *filename) {
         FILE *obj_file = fopen(filename, "rb");
         if (!obj_file) {
                 return &g_error_obj;
@@ -830,14 +841,14 @@ static Obj *load_obj(Arena *arena, char *filename) {
         fseek(obj_file, 0, SEEK_END);
         size_t obj_file_len = ftell(obj_file);
         rewind(obj_file);
-        char *src = arena_alloc(arena, obj_file_len + 1);
+        char *src = arena_alloc(&g_arena, obj_file_len + 1);
         fread(src, 1, obj_file_len, obj_file);
         fclose(obj_file);
 
-        Obj *obj = arena_alloc(arena, sizeof(Obj));
+        Obj *obj = arena_alloc(&g_arena, sizeof(Obj));
 
         size_t vert_buf_size = 1 << 12;
-        obj->vertices = arena_alloc(arena, vert_buf_size);
+        obj->vertices = arena_alloc(&g_arena, vert_buf_size);
 
         #define SKIP_SPACE    {while (is_space(*src)) ++src;}
         #define SKIP_TO_SPACE {while (!is_space(*src)) ++src;}
@@ -846,7 +857,7 @@ static Obj *load_obj(Arena *arena, char *filename) {
         for (; *src == 'v' && src[1] == ' '; ++i) {
                 src += 2;
                 if (i * sizeof(Vec3) >= vert_buf_size) {
-                        arena_commit_at(arena, obj->vertices, vert_buf_size *= 2);
+                        arena_commit_at(&g_arena, obj->vertices, vert_buf_size *= 2);
                 }
 
                 SKIP_SPACE;
@@ -864,13 +875,13 @@ static Obj *load_obj(Arena *arena, char *filename) {
         }
 
         size_t uv_buf_size = 1 << 12;
-        obj->uvs = arena_alloc(arena, uv_buf_size);
+        obj->uvs = arena_alloc(&g_arena, uv_buf_size);
 
         i = 0;
         for (; *src == 'v' && src[1] == 't'; ++i) {
                 src += 2;
                 if (i * sizeof(Vec3) >= uv_buf_size) {
-                        arena_commit_at(arena, obj->uvs, uv_buf_size *= 2);
+                        arena_commit_at(&g_arena, obj->uvs, uv_buf_size *= 2);
                 }
 
                 SKIP_SPACE;
@@ -888,13 +899,13 @@ static Obj *load_obj(Arena *arena, char *filename) {
         }
 
         size_t norm_buf_size = 1 << 12;
-        obj->normals = arena_alloc(arena, norm_buf_size);
+        obj->normals = arena_alloc(&g_arena, norm_buf_size);
 
         i = 0;
         for (; *src == 'v' && src[1] == 'n'; ++i) {
                 src += 2;
                 if (i * sizeof(Vec3) >= norm_buf_size) {
-                        arena_commit_at(arena, obj->normals, norm_buf_size *= 2);
+                        arena_commit_at(&g_arena, obj->normals, norm_buf_size *= 2);
                 }
 
                 SKIP_SPACE;
@@ -912,13 +923,13 @@ static Obj *load_obj(Arena *arena, char *filename) {
         }
 
         size_t face_buf_size = 1 << 12;
-        obj->faces = arena_alloc(arena, face_buf_size);
+        obj->faces = arena_alloc(&g_arena, face_buf_size);
 
         i = 0;
         for (; *src == 'f'; ++i) {
                 ++src;
                 if (i * sizeof(Face) >= face_buf_size) {
-                        arena_commit_at(arena, obj->faces, face_buf_size *= 2);
+                        arena_commit_at(&g_arena, obj->faces, face_buf_size *= 2);
                 }
                 
                 SKIP_SPACE;
@@ -953,8 +964,8 @@ static Obj *load_obj(Arena *arena, char *filename) {
 //
 // load_texture - loads a texture file
 //
-Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h) {
-        Texture *texture = arena_alloc(arena, sizeof(Texture));
+Texture *load_texture(char *filename, size_t w, size_t h) {
+        Texture *texture = arena_alloc(&g_arena, sizeof(Texture));
         texture->width = w;
         texture->height = h;
 
@@ -967,7 +978,7 @@ Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h) {
         size_t tex_file_len = ftell(tex_file);
         rewind(tex_file);
 
-        texture->data = arena_alloc(arena, tex_file_len);
+        texture->data = arena_alloc(&g_arena, tex_file_len);
         fread(texture->data, 1, tex_file_len, tex_file);
         fclose(tex_file);
 
@@ -979,7 +990,6 @@ Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h) {
 //              falls back to error assets on failure
 //
 Model *load_model(
-        Arena *arena,
         char *obj_filename,
         char *tm_filename,
         char *nm_filename,
@@ -989,11 +999,11 @@ Model *load_model(
         size_t nm_w,
         size_t nm_h
 ) {
-        Model *model = arena_alloc(arena, sizeof(Model));
+        Model *model = arena_alloc(&g_arena, sizeof(Model));
 
-        model->obj = load_obj(arena, obj_filename);
-        model->texture = load_texture(arena, tm_filename, tm_w, tm_h);
-        model->norm_map = load_texture(arena, nm_filename, nm_w, nm_h);
+        model->obj = load_obj(obj_filename);
+        model->texture = load_texture(tm_filename, tm_w, tm_h);
+        model->norm_map = load_texture(nm_filename, nm_w, nm_h);
         model->material = (mat == NULL) ? &g_error_mat : mat;
 
         return model;
@@ -1002,6 +1012,10 @@ Model *load_model(
 /*
  * @XXX misc. @XXX
  */
+
+size_t get_mem_usage(void) {
+        return arena_get_usage(&g_arena);
+}
 
 Scene *mkscene(Arena *arena) {
         // @TODO might want to add the ability to add multiple reserved regions to an arena (linked list) so each

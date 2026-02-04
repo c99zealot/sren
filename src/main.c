@@ -6,7 +6,6 @@
 // @TODO logging
 // @TODO dev console
 // @TODO Renderer object
-// @TODO move arena to sren.c
 // @TODO multiple viewports (for splitscreen etc.)
 // @TODO coloured shadows
 // @TODO PNG textures
@@ -28,7 +27,6 @@
 #include <SDL2/SDL.h>
 
 #include "sren.h"
-#include "arena.h"
 
 #define TIME(x) {                                                   \
         clock_t start = clock();                                    \
@@ -97,19 +95,16 @@ int main(int argc, char **argv) {
                 return -1;
         }
         
-        Arena render_arena;
-        arena_init(&render_arena, ARENA_RESERVE_DEFAULT, 1 << 24, 1);
-
-        init_renderer(&render_arena, screen->pixels, g_window_width, g_window_height);
+        init_renderer(screen->pixels, g_window_width, g_window_height);
 
         Material plastic = {0.18, 0.65, 0.55, 55};
 
-        Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, &plastic, 1024, 1024, 0, 0);
-        Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, &plastic, 1024, 1024, 0, 0);
-        Model *ceiling_model = load_model(&render_arena, "assets/ceiling.obj", "assets/chainlink.tex", NULL, &plastic, 1024, 1024, 0, 0);
-        //Scene *scene = mkscene(&render_arena);
+        Model *main_model = load_model(argv[1], argv[2], NULL, &plastic, 1024, 1024, 0, 0);
+        Model *floor_model = load_model("assets/floor.obj", "assets/floor.tex", NULL, &plastic, 1024, 1024, 0, 0);
+        Model *ceiling_model = load_model("assets/ceiling.obj", "assets/chainlink.tex", NULL, &plastic, 1024, 1024, 0, 0);
+        //Scene *scene = mkscene(NULL);
         
-        Texture *fontset = load_texture(&render_arena, "assets/fontset.tex", 7392, 128);
+        Texture *fontset = load_texture("assets/fontset.tex", 7392, 128);
  
         Light light = {
                 .colour = VEC4(1.0, 1.0, 1.0, 1.0),
@@ -120,7 +115,7 @@ int main(int argc, char **argv) {
                 .subject = VEC3(0, -1, 0),
                 .up = VEC3(0, 1, 0),
         };
-        init_light(&render_arena, &light, 1024, 1024);
+        init_light(&light, 1024, 1024);
 
         Camera cam = {
                 .pos = VEC3(0.1, 0.4, 1),
@@ -264,7 +259,7 @@ int main(int argc, char **argv) {
                         frames_drawn,
                         argv[1], main_model->obj->face_count,
                         argv[2], main_model->texture->width, main_model->texture->height,
-                        (double)arena_get_usage(&render_arena)/(1024*1024),
+                        (double)get_mem_usage()/(1024*1024),
                         &cam.pos
                 );
 
@@ -276,7 +271,7 @@ int main(int argc, char **argv) {
         }
 
 _exit:
-        arena_deinit(&render_arena);
+        deinit_renderer();
         SDL_Quit();
         return 0;
 }

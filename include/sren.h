@@ -551,10 +551,10 @@
                 memcpy(light->view_mat, view, sizeof(Mat4));
         }
 
-
         extern void clear_screen(char c);
         extern void point(int x, int y, Vec4 colour);
-        extern void init_renderer(Arena *arena, uint32_t *framebuffer, size_t fb_width, size_t fb_height);
+        extern void init_renderer(uint32_t *framebuffer, size_t fb_width, size_t fb_height);
+        extern void deinit_renderer(void);
         extern void line(Vec3 a, Vec3 b, Vec4 colour);
         extern void render_model(Model *model, Camera *cam, Light *light);
         extern double dbuf_read(int x, int y);
@@ -562,15 +562,15 @@
         extern Vec3 render_text(Vec3 pos, Vec4 colour, double scale, Texture *fontset, const char *fmt, ...);
         extern void render_image_fragment(Vec3 pos, Vec4 colour, Texture *texture, Vec3 uv, double frag_w, double frag_h, double scale);
         extern Vec3 render_glyph(Vec3 pos, Vec4 colour, double scale, Texture *fontset, char c);
-        extern void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_height);
+        extern void init_light(Light *light, size_t smap_width, size_t smap_height);
         extern int out_of_view(Vec3 v);
         extern void fog(double thickness, Vec4 colour);
         extern double smap_read(Shadow_Map *shadow_map, int x, int y);
         extern void render_model_smap(Model *model, Light *light);
         extern void reset_smap(Shadow_Map *smap);
-        extern Texture *load_texture(Arena *arena, char *filename, size_t w, size_t h);
+        extern size_t get_mem_usage(void);
+        extern Texture *load_texture(char *filename, size_t w, size_t h);
         extern Model *load_model(
-                Arena *arena,
                 char *obj_filename,
                 char *tm_filename,
                 char *nm_filename,
