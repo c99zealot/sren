@@ -15,6 +15,7 @@
         #define MAX(x, y) ((x) > (y) ? (x) : (y))
         #define MAX3(x, y, z) (MAX(MAX(x, y), z))
         #define MIN3(x, y, z) (MIN(MIN(x, y), z))
+        #define CLAMP(x, y, z) (MAX(x, MIN(y, z)))
         
         #define RGB(x, y, z)  (((x) << 16) | ((y) << 8) | (z))
         #define RGBf(x, y, z) (((uint8_t)(x*255) << 16) | ((uint8_t)(y*255) << 8) | (uint8_t)(z*255))
@@ -563,6 +564,7 @@
         extern Vec3 render_glyph(Vec3 pos, Vec4 colour, double scale, Texture *fontset, char c);
         extern void init_light(Arena *arena, Light *light, size_t smap_width, size_t smap_height);
         extern int out_of_view(Vec3 v);
+        extern void fog(double thickness, Vec4 colour);
         extern double smap_read(Shadow_Map *shadow_map, int x, int y);
         extern void render_model_smap(Model *model, Light *light);
         extern void reset_smap(Shadow_Map *smap);

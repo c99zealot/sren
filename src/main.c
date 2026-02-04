@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
 
         init_renderer(&render_arena, screen->pixels, g_window_width, g_window_height);
 
-        Material plastic = {1, 0.5, 1, 256};
+        Material plastic = {0.18, 0.65, 0.55, 55};
 
         Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, &plastic, 1024, 1024, 0, 0);
         Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, &plastic, 1024, 1024, 0, 0);
@@ -218,7 +218,6 @@ int main(int argc, char **argv) {
                 render_model(floor_model, &cam, &light);
                 render_model(main_model, &cam, &light);
                 //render_model(ceiling_model, &cam, &light);
-                render_axes(&cam);
 
                 if ((frames_drawn % 64) == 0) {
                         frame_time = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
@@ -229,13 +228,16 @@ int main(int argc, char **argv) {
                         frame_time_low = frame_time < frame_time_low ? frame_time : frame_time_low;
                 }
 
+                //fog(CLAMP(0, 1, 0.5*cam.pos.y), VEC4(0.8, 0.8, 0.8, 1));
+
                 Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
                 Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
-
                 if (!out_of_view(light_pos_screen) && dbuf_read(light_pos_screen.x, light_pos_screen.y) > 1.0/light_pos_screen.z) {
                         point(light_pos_screen.x, light_pos_screen.y, light.colour);
                         render_text(light_pos_proj, light.colour, 0.1, fontset, "light %v", &light.pos);
                 }
+
+                render_axes(&cam);
 
                 time_t rawtime;
                 time(&rawtime);

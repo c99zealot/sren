@@ -481,8 +481,6 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
                 return;
         }
 
-        bool facing_light = cross(vec3_sub(b_lightview, a_lightview), vec3_sub(c_lightview, a_lightview)).z > 0;
-
         Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
         Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
         Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
@@ -539,7 +537,7 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         #define VEC_INTERP(r, s, t) (vec3_scale(vec3_add(vec3_scale(r, Ea), vec3_add(vec3_scale(s, Eb), \
                                         vec3_scale(t, Ec))), recip_area))
 
-        double LaKa = light->ambient * mat->ambient; // @TODO base on up vector
+        double LaKa = light->ambient * mat->ambient;
         double LdKd = light->diffuse * mat->diffuse;
         double LsKs = light->specular * mat->specular;
 
@@ -604,6 +602,18 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
 
         #undef INTERP
         #undef VEC_INTERP
+}
+
+//
+// fog - screen-space fog effect
+//
+void fog(double thickness, Vec4 colour) {
+        for (int y = g_min_y; y <= g_max_y; ++y) {
+                for (int x = g_min_x; x <= g_max_x; ++x) {
+                        colour.w = thickness * (1 - MIN(1, -dbuf_read(x, y)));
+                        point(x, y, alpha_blend(colour, get_pixel(x, y)));
+                }
+        }
 }
 
 //
