@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
 
         init_renderer(&render_arena, screen->pixels, g_window_width, g_window_height);
 
-        Material plastic = {0.3, 0.5, 0.5, 32};
+        Material plastic = {1, 0.5, 1, 256};
 
         Model *main_model = load_model(&render_arena, argv[1], argv[2], NULL, &plastic, 1024, 1024, 0, 0);
         Model *floor_model = load_model(&render_arena, "assets/floor.obj", "assets/floor.tex", NULL, &plastic, 1024, 1024, 0, 0);
@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
                 }
 
                 move_light_to(&light, VEC3(sin(i), 1.1, cos(i)));
-#if 1
+#if 0
                 light.colour = VEC4(
                         0.8f + 0.2*sin(8*i),
                         0.8f + 0.2*sin(8*i + 2.094),
@@ -210,14 +210,14 @@ int main(int argc, char **argv) {
                 if (frames_drawn % 2) {
                         // @TODO this is a bit low-level for shadow map handling, tie it to moving the light source and organise everything in a Scene so it can be re-rendered to the shadow map
                         reset_smap(light.shadow_map);
-                        render_model_smap(floor_model, &light);
+                        //render_model_smap(floor_model, &light);
                         render_model_smap(main_model, &light);
-                        render_model_smap(ceiling_model, &light);
+                        //render_model_smap(ceiling_model, &light);
                 }
 
                 render_model(floor_model, &cam, &light);
                 render_model(main_model, &cam, &light);
-                render_model(ceiling_model, &cam, &light);
+                //render_model(ceiling_model, &cam, &light);
                 render_axes(&cam);
 
                 if ((frames_drawn % 64) == 0) {

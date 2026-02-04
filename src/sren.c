@@ -1,6 +1,5 @@
 // @TODO do calculations in fixed-point when rasterising, precision errors are causing smearing in large faces.
 //       rendering models in order of descending distance from the camera seems to fix this for now.
-// @TODO specular highlights aren't quite correct but this might be fixed when shadow acne is fixed properly
 
 #include <math.h>
 #include <stdio.h>
@@ -333,13 +332,13 @@ static inline Vec4 sample_texture(Texture *texture, double x, double y) {
         size_t u = x*(texture->width - 1);
         size_t v = (1.0 - y)*(texture->height - 1);
 
-        size_t i = v*texture->width + u;
+        size_t i = 4*sizeof(uint8_t) * (v*texture->width + u);
 
         Vec4 result = {
-                .x = texture->data[i * 4*sizeof(uint8_t)],
-                .y = texture->data[i * 4*sizeof(uint8_t) + 1],
-                .z = texture->data[i * 4*sizeof(uint8_t) + 2],
-                .w = texture->data[i * 4*sizeof(uint8_t) + 3]
+                .x = texture->data[i],
+                .y = texture->data[i + 1],
+                .z = texture->data[i + 2],
+                .w = texture->data[i + 3]
         };
 
         return vec4_scale(result, 1.0/255);
@@ -428,10 +427,10 @@ static inline Vec4 vec4_clamp(Vec4 v) {
 }
 
 //
-// reflect - reflects a unit vector about another unit vector b
+// reflect - reflects a unit vector r about another unit vector n
 //
-static inline Vec3 reflect(Vec3 a, Vec3 b) {
-        return vec3_sub(vec3_scale(a, 2*vec3_dot(a, b)), b);
+static inline Vec3 reflect(Vec3 r, Vec3 n) {
+        return vec3_sub(vec3_scale(n, 2*vec3_dot(n, r)), r);
 }
 
 //
@@ -540,7 +539,7 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
         #define VEC_INTERP(r, s, t) (vec3_scale(vec3_add(vec3_scale(r, Ea), vec3_add(vec3_scale(s, Eb), \
                                         vec3_scale(t, Ec))), recip_area))
 
-        double ambient = light->ambient * mat->ambient; // @TODO base on up vector
+        double LaKa = light->ambient * mat->ambient; // @TODO base on up vector
         double LdKd = light->diffuse * mat->diffuse;
         double LsKs = light->specular * mat->specular;
 
@@ -562,23 +561,22 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
                                 Vec4 pixel = get_pixel(x, y);
 
                                 if (smap_read(light->shadow_map, lightview.x, lightview.y) <= lightview.z + 0.05) {
-                                        Vec3 norm = VEC_INTERP(na, nb, nc);
-                                        norm = unit(vec3_scale(norm, 1.0/recip_z));
-
-                                        Vec3 to_light = VEC_INTERP(a_to_light, b_to_light, c_to_light);
-                                        to_light = vec3_scale(to_light, 1.0/recip_z);
-
-                                        Vec3 to_cam = VEC_INTERP(a_to_cam, b_to_cam, c_to_cam);
-                                        to_cam = vec3_scale(to_cam, 1.0/recip_z);
+                                        Vec3 to_cam = vec3_scale(VEC_INTERP(a_to_cam, b_to_cam, c_to_cam), 1.0/recip_z);
+                                        Vec3 to_light = vec3_scale(
+                                                VEC_INTERP(a_to_light, b_to_light, c_to_light),
+                                                1.0/recip_z
+                                        );
 
                                         Vec3 light_dir = unit(to_light);
                                         Vec3 cam_dir = unit(to_cam);
 
                                         double dist = vec3_norm(to_light);
                                         double atten = 1.0/(1.0 + light->dropoff*dist*dist);
+                                        Vec3 norm = unit(vec3_scale(VEC_INTERP(na, nb, nc), 1.0/recip_z));
 
+                                        double ambient = LaKa;
                                         double diffuse = atten * LdKd * MAX(0, vec3_dot(norm, light_dir));
-                                        double specular = facing_light ? atten * LsKs * pow(vec3_dot(reflect(cam_dir, light_dir), norm), mat->shininess) : 0; // @TODO LUT for powers
+                                        double specular = atten * LsKs * pow(MAX(0, vec3_dot(reflect(light_dir, norm), cam_dir)), mat->shininess); // @TODO LUT for powers
 
                                         double old_alpha = lit_colour.w;
                                         lit_colour = vec4_scale(lit_colour, ambient + diffuse);
@@ -587,7 +585,7 @@ static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
 
                                         lit_colour = vec4_clamp(alpha_blend(lit_colour, pixel));
                                 } else {
-                                        lit_colour = vec4_scale(alpha_blend(lit_colour, pixel), ambient);
+                                        lit_colour = vec4_scale(alpha_blend(lit_colour, pixel), LaKa);
                                 }
 
                                 point(x, y, lit_colour);
