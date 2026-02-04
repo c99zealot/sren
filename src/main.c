@@ -94,14 +94,22 @@ int main(int argc, char **argv) {
                 SDL_Quit();
                 return -1;
         }
+
+        SDL_WarpMouseInWindow(window, g_window_width/2, g_window_height/2);
+        SDL_SetRelativeMouseMode(SDL_TRUE);
         
         init_renderer(screen->pixels, g_window_width, g_window_height);
 
-        Material plastic = {0.18, 0.65, 0.55, 55};
+        Material glass = {
+                .ambient = 0.18,
+                .diffuse = 0.65,
+                .specular = 1,
+                .shininess = 256
+        };
 
-        Model *main_model = load_model(argv[1], argv[2], NULL, &plastic, 1024, 1024, 0, 0);
-        Model *floor_model = load_model("assets/floor.obj", "assets/floor.tex", NULL, &plastic, 1024, 1024, 0, 0);
-        Model *ceiling_model = load_model("assets/ceiling.obj", "assets/chainlink.tex", NULL, &plastic, 1024, 1024, 0, 0);
+        Model *main_model = load_model(argv[1], argv[2], NULL, &glass, 1024, 1024, 0, 0);
+        Model *floor_model = load_model("assets/floor.obj", "assets/floor.tex", NULL, &glass, 1024, 1024, 0, 0);
+        Model *ceiling_model = load_model("assets/ceiling.obj", "assets/chainlink.tex", NULL, &glass, 1024, 1024, 0, 0);
         //Scene *scene = mkscene(NULL);
         
         Texture *fontset = load_texture("assets/fontset.tex", 7392, 128);
@@ -122,17 +130,14 @@ int main(int argc, char **argv) {
                 .subject = VEC3(0, 0, 0),
                 .up = VEC3(0, 1, 0)
         };
-        init_cam(&cam);
+        Vec3 cam_vel = VEC3(0, 0, 0);
 
-        SDL_WarpMouseInWindow(window, g_window_width/2, g_window_height/2);
-        SDL_SetRelativeMouseMode(SDL_TRUE);
+        init_cam(&cam);
 
         const double mouse_sens = 0.02;
 
         double curs_dx = 0;
         double curs_dy = 0;
-
-        Vec3 cam_vel = VEC3(0, 0, 0);
 
         int frames_drawn = 0;
         double fps = 0;
@@ -223,7 +228,7 @@ int main(int argc, char **argv) {
                         frame_time_low = frame_time < frame_time_low ? frame_time : frame_time_low;
                 }
 
-                //fog(CLAMP(0, 1, 0.5*cam.pos.y), VEC4(0.8, 0.8, 0.8, 1));
+                fog(0.7, VEC4(0.8, 0.8, 0.8, 1));
 
                 Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
                 Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);
