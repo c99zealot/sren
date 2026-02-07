@@ -8,6 +8,7 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <float.h>
 
 #include "sren.h"
 #include "arena.h"
@@ -33,9 +34,18 @@ Arena g_arena;
  */
 
 //
+// reset_smap - resets a Light's shadow map to the maximum depth value
+//
+static void reset_smap(Shadow_Map *smap) {
+        for (int i = 0; i < smap->width*smap->height; ++i) {
+                smap->depths[i] = -1024.0;
+        }
+}
+
+//
 // mk_smap - allocates and initialises a Shadow_Map
 //
-static Shadow_Map *mk_smap(size_t w, size_t h) {
+static Shadow_Map *mk_smap(size_t w, size_t h, int lifetime) {
         Shadow_Map *smap = arena_alloc(&g_arena, sizeof(Shadow_Map));
         *smap = (Shadow_Map){
                 .width = w,
@@ -44,19 +54,53 @@ static Shadow_Map *mk_smap(size_t w, size_t h) {
                 .min_y = -h/2,
                 .max_x = w/2 - 1,
                 .max_y = h/2 - 1,
-                .data = arena_alloc(&g_arena, w*h*sizeof(double)*4),
+                .depths = arena_alloc(&g_arena, w*h*sizeof(double)),
+                .lifetime = lifetime,
+                .age = 0,
         };
 
         reset_smap(smap);
         return smap;
 }
 
+/*
+ * @XXX shadow mapping @XXX
+ */
+
+//
+// reset_fmap - resets a Light's filter map to transparent white
+//
+static void reset_fmap(Filter_Map *fmap) {
+        memset(fmap->colours, 0xFF, fmap->width*fmap->height*sizeof(uint32_t));
+}
+
+//
+// mk_fmap - allocates and initialises a Shadow_Map
+//
+static Filter_Map *mk_fmap(size_t w, size_t h, int lifetime) {
+        Filter_Map *fmap = arena_alloc(&g_arena, sizeof(Filter_Map));
+        *fmap = (Filter_Map){
+                .width = w,
+                .height = h,
+                .min_x = -w/2,
+                .min_y = -h/2,
+                .max_x = w/2 - 1,
+                .max_y = h/2 - 1,
+                .colours = arena_alloc(&g_arena, w*h*sizeof(uint32_t)),
+                .lifetime = lifetime,
+                .age = 0,
+        };
+
+        reset_fmap(fmap);
+        return fmap;
+}
+
 //
 // smap_write - writes a depth value at (x, y) in a shadow map
 //
-static inline void smap_write(Shadow_Map *shadow_map, int x, int y, double depth) {
-        size_t i = (shadow_map->width * (shadow_map->height/2 - y) - shadow_map->width/2 + x);
-        shadow_map->data[i] = depth;
+static inline void smap_write(Shadow_Map *smap, int x, int y, double depth) {
+        size_t i = (smap->width * (smap->height/2 - y) - smap->width/2 + x);
+        smap->depths[i] = depth;
 }
 
 //
@@ -64,7 +108,23 @@ static inline void smap_write(Shadow_Map *shadow_map, int x, int y, double depth
 //
 double smap_read(Shadow_Map *smap, int x, int y) {
         size_t i = (smap->width * (smap->height/2 - y) - smap->width/2 + x);
-        return (i >= smap->width*smap->height) ? -1024.0 : smap->data[i];
+        return (i >= smap->width*smap->height) ? -1024.0 : smap->depths[i];
+}
+
+//
+// fmap_write - writes a colour value at (x, y) in a filter map
+//
+static inline void fmap_write(Filter_Map *fmap, int x, int y, Vec4 colour) {
+        size_t i = (fmap->width * (fmap->height/2 - y) - fmap->width/2 + x);
+        fmap->colours[i] = vec4_to_rgba(colour);
+}
+
+//
+// fmap_read - reads the colour value at (x, y) in a shadow map
+//
+Vec4 fmap_read(Filter_Map *fmap, int x, int y) {
+        size_t i = (fmap->width * (fmap->height/2 - y) - fmap->width/2 + x);
+        return (i >= fmap->width*fmap->height) ? (Vec4){0} : rgba_to_vec4(fmap->colours[i]);
 }
 
 //
@@ -152,17 +212,112 @@ static void render_face_smap(Face *f, Model *model, Light *light) {
         for (int y = max_y; y >= min_y; --y) {
                 for (int x = min_x; x <= max_x; ++x) {
                         if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
-                                // @TODO more sophisticated alpha handling, thinking about a separate map which colours
-                                //       the shadow, then opacity influences how strongly the texture colour colours
-                                //       the shadow
-
                                 double interp_recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
                                 Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/interp_recip_z);
                                 Vec4 texel = sample_texture(model->texture, uv.x, uv.y);
 
                                 double depth = INTERP(a.z, b.z, c.z);
-                                if (texel.w > 0.5 && depth > smap_read(light->shadow_map, x, y)) {
+                                if (texel.w == 1 && depth > smap_read(light->shadow_map, x, y)) {
                                         smap_write(light->shadow_map, x, y, depth);
+                                }
+                        }
+
+                        Ea += Aa;
+                        Eb += Ab;
+                        Ec += Ac;
+                }
+
+                Ea = Ea_x0 -= Ba;
+                Eb = Eb_x0 -= Bb;
+                Ec = Ec_x0 -= Bc;
+        }
+
+        #undef INTERP
+        #undef VEC_INTERP
+}
+
+//
+// render_face_fmap - renders a single face in a model with transparency to a filter map
+//
+static void render_face_fmap(Face *f, Model *model, Light *light) {
+        Vec3 *v = model->obj->vertices;
+        Vec3 *vt = model->obj->uvs;
+
+        Vec3 a = m4v3_mul(light->view_mat, v[f->v0[VERTEX]]);
+        Vec3 b = m4v3_mul(light->view_mat, v[f->v1[VERTEX]]);
+        Vec3 c = m4v3_mul(light->view_mat, v[f->v2[VERTEX]]);
+
+        if (a.z > 0 || b.z > 0 || c.z > 0) {
+                return;
+        }
+
+        a = persp(a);
+        b = persp(b);
+        c = persp(c);
+
+        Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
+        if (face_norm.z <= 0) {
+                return;
+        }
+
+        double a_recip_z = 1.0/a.z;
+        double b_recip_z = 1.0/b.z;
+        double c_recip_z = 1.0/c.z;
+
+        Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
+        Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
+        Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
+
+        a = m4v3_mul(light->viewport, a);
+        b = m4v3_mul(light->viewport, b);
+        c = m4v3_mul(light->viewport, c);
+
+        double recip_area = 1.0/signed_tri_area2(a, b, c);
+
+        int min_x = MIN3(a.x, b.x, c.x);
+        int max_x = MAX3(a.x, b.x, c.x);
+        int min_y = MIN3(a.y, b.y, c.y);
+        int max_y = MAX3(a.y, b.y, c.y);
+
+        min_x = MAX(min_x, light->filter_map->min_x);
+        min_y = MAX(min_y, light->filter_map->min_y);
+        max_x = MIN(max_x, light->filter_map->max_x);
+        max_y = MIN(max_y, light->filter_map->max_y);
+
+        double Aa = b.y - c.y;
+        double Ab = c.y - a.y;
+        double Ac = a.y - b.y;
+                                   
+        double Ba = c.x - b.x;
+        double Bb = a.x - c.x;
+        double Bc = b.x - a.x;
+
+        double Ca = b.x*c.y - c.x*b.y;
+        double Cb = c.x*a.y - a.x*c.y;
+        double Cc = a.x*b.y - b.x*a.y;
+              
+        double Ea = Aa*min_x + Ba*max_y + Ca;
+        double Eb = Ab*min_x + Bb*max_y + Cb;
+        double Ec = Ac*min_x + Bc*max_y + Cc;
+
+        double Ea_x0 = Ea;
+        double Eb_x0 = Eb;
+        double Ec_x0 = Ec;
+
+        #define INTERP(r, s, t)     (recip_area * (Ea*(r) + Eb*(s) + Ec*(t)))
+        #define VEC_INTERP(r, s, t) (vec3_scale(vec3_add(vec3_scale(r, Ea), vec3_add(vec3_scale(s, Eb), \
+                                        vec3_scale(t, Ec))), recip_area))
+
+        for (int y = max_y; y >= min_y; --y) {
+                for (int x = min_x; x <= max_x; ++x) {
+                        if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
+                                double interp_recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
+                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/interp_recip_z);
+                                Vec4 texel = sample_texture(model->texture, uv.x, uv.y);
+
+                                double depth = INTERP(a.z, b.z, c.z);
+                                if (depth > smap_read(light->shadow_map, x, y)) {
+                                        fmap_write(light->filter_map, x, y, texel);
                                 }
                         }
 
@@ -194,11 +349,15 @@ void render_model_smap(Model *model, Light *light) {
 }
 
 //
-// reset_smap - resets a Light's shadow map to the maximum depth value
+// render_model_fmap - renders a model to a filter map
 //
-void reset_smap(Shadow_Map *smap) {
-        for (int i = 0; i < smap->width*smap->height; ++i) {
-                smap->data[i] = -1024.0;
+void render_model_fmap(Model *model, Light *light) {
+        Obj *obj = model->obj;
+        Vec3 *v = obj->vertices;
+        Face *f = obj->faces;
+
+        for (int i = 0; i < obj->face_count; ++i) {
+                render_face_fmap(&f[i], model, light);
         }
 }
 
@@ -224,7 +383,7 @@ double dbuf_read(int x, int y) {
 //
 // reset_dbuf - resets the depth buffer to the maximum depth value
 //
-void reset_dbuf(void) {
+static void reset_dbuf(void) {
         memset(g_depthbuffer, 0, g_fb_width*g_fb_height*sizeof(double));
 }
 
@@ -265,12 +424,13 @@ void deinit_renderer(void) {
 //
 // init_light - initialises a Light
 //
-void init_light(Light *light, size_t smap_width, size_t smap_height) {
-        light->shadow_map = mk_smap(smap_width, smap_height);
+void init_light(Light *light, size_t map_w, size_t map_h, int smap_lt, int fmap_lt) {
+        light->shadow_map = mk_smap(map_w, map_h, smap_lt);
+        light->filter_map = mk_fmap(map_w, map_h, fmap_lt);
 
         memset(light->viewport, 0, sizeof(Mat4));
-        light->viewport[0][0] = (smap_width - 1)/2;
-        light->viewport[1][1] = smap_height/2 - 1;
+        light->viewport[0][0] = (map_w - 1)/2;
+        light->viewport[1][1] = map_h/2 - 1;
         light->viewport[2][2] = 1.0;
         light->viewport[3][3] = 1.0;
 }
@@ -303,12 +463,6 @@ void line(Vec3 a, Vec3 b, Vec4 colour) {
         if (a.x == b.x && a.y == b.y) {
                 point(a.x, a.y, colour);
                 return;
-        }
-
-        #define SWAP(T, x, y) { \
-                T _tmp = x;     \
-                (x) = (y);      \
-                (y) = _tmp;     \
         }
 
         int steep = abs(a.y - b.y) > abs(a.x - b.x);
@@ -445,9 +599,180 @@ static inline Vec3 reflect(Vec3 r, Vec3 n) {
 }
 
 //
-// render_face - renders a single, textured & lit face face from a Model
+// render_face - renders a single, textured & lit face from a model
 //
 static void render_face(Face *f, Model *model, Camera *cam, Light *light) {
+        Vec3 *v = model->obj->vertices;
+        Vec3 *vt = model->obj->uvs;
+        Vec3 *vn = model->obj->normals;
+
+        Material *mat = model->material;
+
+        Vec3 a = v[f->v0[VERTEX]];
+        Vec3 b = v[f->v1[VERTEX]];
+        Vec3 c = v[f->v2[VERTEX]];
+
+        Vec3 a_lightview = m4v3_mul(light->view_mat, a);
+        Vec3 b_lightview = m4v3_mul(light->view_mat, b);
+        Vec3 c_lightview = m4v3_mul(light->view_mat, c);
+        
+        a = m4v3_mul(cam->view_mat, a);
+        b = m4v3_mul(cam->view_mat, b);
+        c = m4v3_mul(cam->view_mat, c);
+
+        if (a.z > 0 || b.z > 0 || c.z > 0) {
+                return;
+        }
+
+        Vec3 light_camview = m4v3_mul(cam->view_mat, light->pos);
+        Vec3 a_to_light = vec3_sub(light_camview, a);
+        Vec3 b_to_light = vec3_sub(light_camview, b);
+        Vec3 c_to_light = vec3_sub(light_camview, c);
+
+        double a_recip_z = 1.0/a.z;
+        double b_recip_z = 1.0/b.z;
+        double c_recip_z = 1.0/c.z;
+
+        Vec3 a_to_cam = vec3_scale(a, -a_recip_z);
+        Vec3 b_to_cam = vec3_scale(b, -b_recip_z);
+        Vec3 c_to_cam = vec3_scale(c, -c_recip_z);
+
+        a = persp(a);
+        b = persp(b);
+        c = persp(c);
+
+        Vec3 face_norm = cross(vec3_sub(b, a), vec3_sub(c, a));
+        if (face_norm.z <= 0) {
+                return;
+        }
+
+        Vec3 ta = vec3_scale(vt[f->v0[UV]], a_recip_z);
+        Vec3 tb = vec3_scale(vt[f->v1[UV]], b_recip_z);
+        Vec3 tc = vec3_scale(vt[f->v2[UV]], c_recip_z);
+
+        Vec3 na = vec3_scale(m4v3_mul(cam->inv_tr, vn[f->v0[NORM]]), a_recip_z);
+        Vec3 nb = vec3_scale(m4v3_mul(cam->inv_tr, vn[f->v1[NORM]]), b_recip_z);
+        Vec3 nc = vec3_scale(m4v3_mul(cam->inv_tr, vn[f->v2[NORM]]), c_recip_z);
+
+        a_to_light = vec3_scale(a_to_light, a_recip_z);
+        b_to_light = vec3_scale(b_to_light, b_recip_z);
+        c_to_light = vec3_scale(c_to_light, c_recip_z);
+
+        a_lightview = vec3_scale(a_lightview, a_recip_z);
+        b_lightview = vec3_scale(b_lightview, b_recip_z);
+        c_lightview = vec3_scale(c_lightview, c_recip_z);
+
+        a = m4v3_mul(g_viewport, a);
+        b = m4v3_mul(g_viewport, b);
+        c = m4v3_mul(g_viewport, c);
+
+        double recip_area = 1.0/signed_tri_area2(a, b, c);
+
+        int min_x = MIN3(a.x, b.x, c.x);
+        int max_x = MAX3(a.x, b.x, c.x);
+        int min_y = MIN3(a.y, b.y, c.y);
+        int max_y = MAX3(a.y, b.y, c.y);
+
+        min_x = MAX(min_x, g_min_x);
+        min_y = MAX(min_y, g_min_y);
+        max_x = MIN(max_x, g_max_x);
+        max_y = MIN(max_y, g_max_y);
+
+        double Aa = b.y - c.y;
+        double Ab = c.y - a.y;
+        double Ac = a.y - b.y;
+                                   
+        double Ba = c.x - b.x;
+        double Bb = a.x - c.x;
+        double Bc = b.x - a.x;
+
+        double Ca = b.x*c.y - c.x*b.y;
+        double Cb = c.x*a.y - a.x*c.y;
+        double Cc = a.x*b.y - b.x*a.y;
+              
+        double Ea = Aa*min_x + Ba*max_y + Ca;
+        double Eb = Ab*min_x + Bb*max_y + Cb;
+        double Ec = Ac*min_x + Bc*max_y + Cc;
+
+        double Ea_x0 = Ea;
+        double Eb_x0 = Eb;
+        double Ec_x0 = Ec;
+
+        #define INTERP(r, s, t)     (recip_area * (Ea*(r) + Eb*(s) + Ec*(t)))
+        #define VEC_INTERP(r, s, t) (vec3_scale(vec3_add(vec3_scale(r, Ea), vec3_add(vec3_scale(s, Eb), \
+                                        vec3_scale(t, Ec))), recip_area))
+
+        double LaKa = light->ambient * mat->ambient;
+        double LdKd = light->diffuse * mat->diffuse;
+        double LsKs = light->specular * mat->specular;
+
+        for (int y = max_y; y >= min_y; --y) {
+                for (int x = min_x; x <= max_x; ++x) {
+                        if (Ea >= 0 && Eb >= 0 && Ec >= 0) {
+                                double recip_z = INTERP(a_recip_z, b_recip_z, c_recip_z);
+                                if (recip_z > dbuf_read(x, y)) {
+                                        continue;
+                                }
+
+                                Vec3 lightview = VEC_INTERP(a_lightview, b_lightview, c_lightview);
+                                lightview = vec3_scale(lightview, 1.0/recip_z);
+                                lightview = m4v3_mul(light->viewport, persp(lightview));
+
+                                Vec3 uv = vec3_scale(VEC_INTERP(ta, tb, tc), 1.0/recip_z);
+                                Vec4 lit_colour = vec4_mul(sample_texture(model->texture, uv.x, uv.y), light->colour);
+
+                                if (smap_read(light->shadow_map, lightview.x, lightview.y) - lightview.z <= 0.05) {
+                                        Vec3 to_cam = vec3_scale(VEC_INTERP(a_to_cam, b_to_cam, c_to_cam), 1.0/recip_z);
+                                        Vec3 to_light = vec3_scale(
+                                                VEC_INTERP(a_to_light, b_to_light, c_to_light),
+                                                1.0/recip_z
+                                        );
+
+                                        Vec3 light_dir = unit(to_light);
+                                        Vec3 cam_dir = unit(to_cam);
+
+                                        double dist = vec3_norm(to_light);
+                                        double atten = 1.0/(1.0 + light->dropoff*dist*dist);
+                                        Vec3 norm = unit(vec3_scale(VEC_INTERP(na, nb, nc), 1.0/recip_z));
+
+                                        double ambient = LaKa;
+                                        double diffuse = atten * LdKd * MAX(0, vec3_dot(norm, light_dir));
+                                        double specular = atten * LsKs * pow(MAX(0, vec3_dot(reflect(light_dir, norm), cam_dir)), mat->shininess); // @TODO LUT for powers
+
+
+                                        lit_colour = vec4_scale(lit_colour, ambient + diffuse);
+                                        lit_colour = vec4_add(lit_colour, vec4_scale(light->colour, specular));
+
+                                        Vec4 filtered_colour = fmap_read(light->filter_map, lightview.x, lightview.y);
+                                        lit_colour = filtered_colour = vec4_mul(filtered_colour, lit_colour);
+                                        //lit_colour = alpha_blend(filtered_colour, lit_colour);
+                                } else {
+                                        lit_colour = vec4_scale(lit_colour, LaKa);
+                                }
+
+                                point(x, y, lit_colour);
+                                dbuf_write(x, y, recip_z);
+                        }
+
+                        Ea += Aa;
+                        Eb += Ab;
+                        Ec += Ac;
+                }
+
+                Ea = Ea_x0 -= Ba;
+                Eb = Eb_x0 -= Bb;
+                Ec = Ec_x0 -= Bc;
+        }
+
+        #undef INTERP
+        #undef VEC_INTERP
+}
+
+//
+// render_alpha_face - renders a single, textured & lit translucent face from a model
+// @TODO lift inner loops of this and render_face to two separate functions (check that the per-face branch involved isn't too bad)
+//
+static void render_alpha_face(Face *f, Model *model, Camera *cam, Light *light) {
         Vec3 *v = model->obj->vertices;
         Vec3 *vt = model->obj->uvs;
         Vec3 *vn = model->obj->normals;
@@ -628,7 +953,7 @@ void fog(double thickness, Vec4 colour) {
 }
 
 //
-// render_model - renders a Model
+// render_model - renders a model
 //
 void render_model(Model *model, Camera *cam, Light *light) {
         Obj *obj = model->obj;
@@ -637,6 +962,69 @@ void render_model(Model *model, Camera *cam, Light *light) {
         for (int i = 0; i < obj->face_count; ++i) {
                 render_face(&f[i], model, cam, light);
         }
+}
+
+//
+// render_alpha_model - renders a model with transparency
+//
+void render_alpha_model(Model *model, Camera *cam, Light *light) {
+        Obj *obj = model->obj;
+        Face *f = obj->faces;
+
+        for (int i = 0; i < obj->face_count; ++i) {
+                render_alpha_face(&f[i], model, cam, light);
+        }
+}
+
+//
+// render_scene - renders all the Models in a Scene, lit by all the Lights in that Scene,
+//                from the perspective of a Camera
+//
+void render_scene(Scene *scene, Camera *cam) {
+        reset_dbuf();
+
+        int smap_lifetime = scene->lights[0]->shadow_map->lifetime;
+        int smap_age = ++scene->lights[0]->shadow_map->age;
+        if (smap_age >= smap_lifetime) {
+                reset_smap(scene->lights[0]->shadow_map);
+
+                for (int i = 0; i < scene->model_count; ++i) {
+                        render_model_smap(scene->models[i], scene->lights[0]);
+                }
+
+                for (int i = 0; i < scene->alpha_model_count; ++i) {
+                        render_model_smap(scene->alpha_models[i], scene->lights[0]);
+                }
+
+                scene->lights[0]->shadow_map->age = 0;
+        }
+
+        int fmap_lifetime = scene->lights[0]->filter_map->lifetime;
+        int fmap_age = ++scene->lights[0]->filter_map->age;
+        if (fmap_age >= fmap_lifetime) {
+                reset_fmap(scene->lights[0]->filter_map);
+
+                for (int i = 0; i < scene->alpha_model_count; ++i) {
+                        render_model_fmap(scene->alpha_models[i], scene->lights[0]);
+                }
+
+                scene->lights[0]->filter_map->age = 0;
+        }
+
+        for (int i = 0; i < scene->model_count; ++i) {
+                render_model(scene->models[i], cam, scene->lights[0]);
+        }
+
+        for (int i = 0; i < scene->alpha_model_count; ++i) {
+                render_alpha_model(scene->alpha_models[i], cam, scene->lights[0]);
+        }
+
+#if 0
+        Filter_Map *fmap = scene->lights[0]->filter_map;
+        for (int i = 0; i < fmap->width*fmap->height; ++i) {
+                g_framebuffer[i] = vec4_to_xrgb(rgba_to_vec4(fmap->colours[i]));
+        }
+#endif
 }
 
 //
@@ -1004,7 +1392,7 @@ Model *load_model(
         model->obj = load_obj(obj_filename);
         model->texture = load_texture(tm_filename, tm_w, tm_h);
         model->norm_map = load_texture(nm_filename, nm_w, nm_h);
-        model->material = (mat == NULL) ? &g_error_mat : mat;
+        model->material = (mat == NULL) ? &g_error_material : mat;
 
         return model;
 }
@@ -1017,19 +1405,65 @@ size_t get_mem_usage(void) {
         return arena_get_usage(&g_arena);
 }
 
-Scene *mkscene(Arena *arena) {
-        // @TODO might want to add the ability to add multiple reserved regions to an arena (linked list) so each
-        // growable array (models, lights, etc.) can be allocated at the same time and just grow without interfering with
-        // each other, I think this would be best implemented with a separate alloc function like arena_alloc_group
-        // and then just have allocate_at (I feel like this also needs to be smoothed out...) look at the pointer and
-        // address the appropriate region, rather than just bumping the end pointer
-        return arena_alloc(arena, sizeof(Scene));
+//
+// init_scene - initialises a Scene by allocating lights and models arrays
+//
+void init_scene(Scene *scene, size_t model_limit, size_t alpha_model_limit, size_t light_limit) {
+        scene->model_count = scene->alpha_model_count = scene->light_count = 0;
+
+        scene->alpha_model_limit = alpha_model_limit;
+        scene->model_limit = model_limit;
+        scene->light_limit = light_limit;
+
+        scene->alpha_models = arena_alloc(&g_arena, alpha_model_limit * sizeof(Model*));
+        scene->models = arena_alloc(&g_arena, model_limit * sizeof(Model*));
+        scene->lights = arena_alloc(&g_arena, light_limit * sizeof(Light*));
 }
 
-void add_model(Model *model) {
-        
+//
+// add_model - adds a Model to a Scene
+//
+void add_model(Scene *scene, Model *model) {
+        if (scene->model_count == scene->model_limit) {
+                return;
+        }
+
+        if (model == NULL) {
+                model = load_model("", "", NULL, NULL, 0, 0, 0, 0);
+        }
+
+        scene->models[scene->model_count] = model;
+        ++scene->model_count;
 }
 
-void add_light(Light *light) {
+//
+// add_model - adds a Model to be rendered with transparency to a Scene
+//
+void add_alpha_model(Scene *scene, Model *model) {
+        if (scene->alpha_model_count == scene->alpha_model_limit) {
+                return;
+        }
 
+        if (model == NULL) {
+                model = load_model("", "", NULL, NULL, 0, 0, 0, 0);
+        }
+
+        scene->alpha_models[scene->alpha_model_count] = model;
+        ++scene->alpha_model_count;
+}
+
+//
+// add_light - adds a Light to a Scene
+//
+void add_light(Scene *scene, Light *light) {
+        if (scene->light_count == scene->light_limit) {
+                return;
+        }
+
+        if (light == NULL) {
+                light = &g_error_light;
+        }
+
+        scene->lights[scene->light_count] = light;
+        ++scene->light_count;
 }

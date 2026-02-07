@@ -1,4 +1,3 @@
-// @TODO start using a Scene object to organise everything instead of just rendering it separately
 // @TODO normal mapping
 // @TODO serious OBJ/MTL parser
 // @TODO make matrices structs so we can use =
@@ -7,13 +6,11 @@
 // @TODO dev console
 // @TODO Renderer object
 // @TODO multiple viewports (for splitscreen etc.)
-// @TODO coloured shadows
 // @TODO PNG textures
 // @TODO screenshot bind
 // @TODO perf
 // @TODO cleaner fontset handling (probably just have init_renderer load it)
-// @TODO specific functions for rendering models with transparent textures,
-//       skip alpha blending when rendering models with opaque textures for performance
+// @TODO render faces to the shadow and filter maps at the same time in the same function
 
 #include <math.h>
 #include <stdio.h>
@@ -100,45 +97,47 @@ int main(int argc, char **argv) {
         
         init_renderer(screen->pixels, g_window_width, g_window_height);
 
+        Light light = {
+                .colour = VEC4(1.0, 1.0, 1.0, 1.0),
+                .ambient = 0.2,
+                .diffuse = 0.7,
+                .specular = 0.7,
+                .dropoff = 0.032,
+                .subject = VEC3(0, -1, 0),
+                .up = VEC3(0, 1, 0),
+        };
+        init_light(&light, 800, 800, 2, 1);
+
         Material glass = {
-                .ambient = 0.18,
+                .ambient = 0.2,
                 .diffuse = 0.65,
-                .specular = 1,
+                .specular = 0.8,
                 .shininess = 256
         };
 
         Model *main_model = load_model(argv[1], argv[2], NULL, &glass, 1024, 1024, 0, 0);
         Model *floor_model = load_model("assets/floor.obj", "assets/floor.tex", NULL, &glass, 1024, 1024, 0, 0);
         Model *ceiling_model = load_model("assets/ceiling.obj", "assets/chainlink.tex", NULL, &glass, 1024, 1024, 0, 0);
-        //Scene *scene = mkscene(NULL);
+
+        Scene scene;
+        init_scene(&scene, 16, 16, 16);
+        add_model(&scene, floor_model);
+        add_model(&scene, main_model);
+        add_alpha_model(&scene, ceiling_model);
+        add_light(&scene, &light);
         
         Texture *fontset = load_texture("assets/fontset.tex", 7392, 128);
- 
-        Light light = {
-                .colour = VEC4(1.0, 1.0, 1.0, 1.0),
-                .ambient = 0.2,
-                .diffuse = 1,
-                .specular = 0.7,
-                .dropoff = 0.032,
-                .subject = VEC3(0, -1, 0),
-                .up = VEC3(0, 1, 0),
-        };
-        init_light(&light, 1024, 1024);
 
         Camera cam = {
                 .pos = VEC3(0.1, 0.4, 1),
                 .subject = VEC3(0, 0, 0),
                 .up = VEC3(0, 1, 0)
         };
-        Vec3 cam_vel = VEC3(0, 0, 0);
-
         init_cam(&cam);
 
         const double mouse_sens = 0.02;
-
         double curs_dx = 0;
         double curs_dy = 0;
-
         int frames_drawn = 0;
         double fps = 0;
         double fps_high = 0;
@@ -146,6 +145,7 @@ int main(int argc, char **argv) {
         double frame_time = 0;
         double frame_time_high = 0;
         double frame_time_low = DBL_MAX;
+        Vec3 cam_vel = VEC3(0, 0, 0);
 
         double i = 0.0;
         for (;;) {
@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
                         SDL_SetRelativeMouseMode(SDL_FALSE);
                 }
 
-                move_light_to(&light, VEC3(sin(i), 1.1, cos(i)));
+                move_light_to(&light, VEC3(sin(i), 2, cos(i)));
 #if 0
                 light.colour = VEC4(
                         0.8f + 0.2*sin(8*i),
@@ -203,21 +203,7 @@ int main(int argc, char **argv) {
                 clock_t start = clock();
 
                 clear_screen(0x21);
-
-                // @TODO same thing as the shadow mapping - handle implicitly
-                reset_dbuf();
-
-                if (frames_drawn % 2) {
-                        // @TODO this is a bit low-level for shadow map handling, tie it to moving the light source and organise everything in a Scene so it can be re-rendered to the shadow map
-                        reset_smap(light.shadow_map);
-                        //render_model_smap(floor_model, &light);
-                        render_model_smap(main_model, &light);
-                        //render_model_smap(ceiling_model, &light);
-                }
-
-                render_model(floor_model, &cam, &light);
-                render_model(main_model, &cam, &light);
-                //render_model(ceiling_model, &cam, &light);
+                render_scene(&scene, &cam);
 
                 if ((frames_drawn % 64) == 0) {
                         frame_time = (double)(clock() - start) / CLOCKS_PER_SEC * 1000;
@@ -228,7 +214,7 @@ int main(int argc, char **argv) {
                         frame_time_low = frame_time < frame_time_low ? frame_time : frame_time_low;
                 }
 
-                fog(0.7, VEC4(0.8, 0.8, 0.8, 1));
+                //fog(0.7, VEC4(0.8, 0.8, 0.8, 1)); // @XXX not rendering correctly with transparent textures
 
                 Vec3 light_pos_proj = persp(m4v3_mul(cam.view_mat, light.pos));
                 Vec3 light_pos_screen = m4v3_mul(g_viewport, light_pos_proj);

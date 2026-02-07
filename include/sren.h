@@ -16,6 +16,12 @@
         #define MAX3(x, y, z) (MAX(MAX(x, y), z))
         #define MIN3(x, y, z) (MIN(MIN(x, y), z))
         #define CLAMP(x, y, z) (MAX(x, MIN(y, z)))
+
+        #define SWAP(T, x, y) { \
+                T _tmp = x;     \
+                (x) = (y);      \
+                (y) = _tmp;     \
+        }
         
         #define RGB(x, y, z)  (((x) << 16) | ((y) << 8) | (z))
         #define RGBf(x, y, z) (((uint8_t)(x*255) << 16) | ((uint8_t)(y*255) << 8) | (uint8_t)(z*255))
@@ -58,7 +64,7 @@
         } Texture;
 
         typedef struct {
-                double *data;
+                double *depths;
 
                 size_t width;
                 size_t height;
@@ -67,7 +73,25 @@
                 int max_y;
                 int min_x;
                 int min_y;
+
+                int lifetime;
+                int age;
         } Shadow_Map;
+
+        typedef struct {
+                uint32_t *colours;
+
+                size_t width;
+                size_t height;
+
+                int max_x;
+                int max_y;
+                int min_x;
+                int min_y;
+
+                int lifetime;
+                int age;
+        } Filter_Map;
 
         typedef struct {
                 Mat4 view_mat;
@@ -92,6 +116,8 @@
                 Vec4 colour;
 
                 Shadow_Map *shadow_map;
+
+                Filter_Map *filter_map;
 
                 double ambient;
                 double diffuse;
@@ -131,11 +157,16 @@
 
         typedef struct {
                 Model **models;
+                Model **alpha_models;
 
                 Light **lights;
 
+                size_t alpha_model_count;
+                size_t alpha_model_limit;
                 size_t model_count;
+                size_t model_limit;
                 size_t light_count;
+                size_t light_limit;
         } Scene;
 
         extern Mat4 g_viewport; // @XXX exposing this for now...
@@ -451,7 +482,7 @@
         }
 
         //
-        // xrgb_to_vec4 - converts a Vec4 to an XRGB8888 value
+        // vec4_to_xrgb - converts a Vec4 to an XRGB8888 value
         //
         static inline uint32_t vec4_to_xrgb(Vec4 xrgb) {
                 uint32_t result;
@@ -460,6 +491,33 @@
                 p[2] = (uint8_t)(xrgb.x*255);
                 p[1] = (uint8_t)(xrgb.y*255);
                 p[0] = (uint8_t)(xrgb.z*255);
+
+                return result;
+        }
+
+        //
+        // rgba_to_vec4 - converts an RGBA8888 value to a Vec4
+        //
+        static inline Vec4 rgba_to_vec4(uint32_t rgba) {
+                uint8_t r = ((uint8_t*)&rgba)[3];
+                uint8_t g = ((uint8_t*)&rgba)[2];
+                uint8_t b = ((uint8_t*)&rgba)[1];
+                uint8_t a = ((uint8_t*)&rgba)[0];
+
+                return vec4_scale(VEC4(r, g, b, a), 1.0/255);
+        }
+
+        //
+        // vec4_to_rgba - converts a Vec4 to an RGBA8888 value
+        //
+        static inline uint32_t vec4_to_rgba(Vec4 rgba) {
+                uint32_t result;
+                uint8_t *p = (uint8_t*)&result;
+
+                p[3] = (uint8_t)(rgba.x*255);
+                p[2] = (uint8_t)(rgba.y*255);
+                p[1] = (uint8_t)(rgba.z*255);
+                p[0] = (uint8_t)(rgba.w*255);
 
                 return result;
         }
@@ -558,16 +616,19 @@
         extern void line(Vec3 a, Vec3 b, Vec4 colour);
         extern void render_model(Model *model, Camera *cam, Light *light);
         extern double dbuf_read(int x, int y);
-        extern void reset_dbuf(void);
         extern Vec3 render_text(Vec3 pos, Vec4 colour, double scale, Texture *fontset, const char *fmt, ...);
         extern void render_image_fragment(Vec3 pos, Vec4 colour, Texture *texture, Vec3 uv, double frag_w, double frag_h, double scale);
         extern Vec3 render_glyph(Vec3 pos, Vec4 colour, double scale, Texture *fontset, char c);
-        extern void init_light(Light *light, size_t smap_width, size_t smap_height);
+        extern void init_light(Light *light, size_t map_w, size_t map_h, int smap_lt, int fmap_lt);
+        extern void init_scene(Scene *scene, size_t model_limit, size_t alpha_model_limit, size_t light_limit);
+        extern void add_light(Scene *scene, Light *light);
+        extern void add_model(Scene *scene, Model *model);
+        extern void add_alpha_model(Scene *scene, Model *model);
         extern int out_of_view(Vec3 v);
         extern void fog(double thickness, Vec4 colour);
         extern double smap_read(Shadow_Map *shadow_map, int x, int y);
         extern void render_model_smap(Model *model, Light *light);
-        extern void reset_smap(Shadow_Map *smap);
+        extern void render_scene(Scene *scene, Camera *cam);
         extern size_t get_mem_usage(void);
         extern Texture *load_texture(char *filename, size_t w, size_t h);
         extern Model *load_model(
